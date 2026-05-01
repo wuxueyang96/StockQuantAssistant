@@ -53,7 +53,12 @@ pip install .
 
 安装后直接用命令行启动：
 ```bash
-stockquant-server --host 0.0.0.0 --port 5000
+stockquant-server start --host 0.0.0.0 --port 5000
+```
+
+停止服务：
+```bash
+stockquant-server stop
 ```
 
 可选参数：
@@ -69,7 +74,7 @@ gunicorn "run:app" -w 4 -b 0.0.0.0:5000
 ### 方式二：源码运行
 ```bash
 pip install -r requirements.txt
-python run.py --host 0.0.0.0 --port 5000
+python run.py start --host 0.0.0.0 --port 5000
 ```
 
 ### 配置
