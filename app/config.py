@@ -36,7 +36,7 @@ class Config:
 
     YFINANCE_TICKER_MAP = {
         'a': lambda code: f"{code}.SS" if code.startswith('6') else f"{code}.SZ",
-        'hk': lambda code: f"{code}.HK",
+        'hk': lambda code: f"{code.lstrip('0')}.HK",
         'us': lambda code: code,
     }
 

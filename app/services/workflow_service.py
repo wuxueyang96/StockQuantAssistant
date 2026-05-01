@@ -26,6 +26,18 @@ class WorkflowService:
                 existing.append(wf_id)
         return existing if existing else None
 
+    def _fill_empty_tables(self, market: str, stock_code: str):
+        for interval in ['daily', '120min', '90min', '60min']:
+            table_name = get_table_name(market, stock_code, interval)
+            if db_manager.table_exists(market, table_name) and db_manager.get_latest_timestamp(market, table_name) is None:
+                logger.info(f"表 {table_name} 为空，立即拉取初始数据...")
+                try:
+                    rows = collect_and_store(market, stock_code, interval, skip_trading_check=True)
+                    if rows > 0:
+                        logger.info(f"写入 {rows} 条数据到 {table_name}")
+                except Exception as e:
+                    logger.warning(f"数据拉取失败 ({table_name}): {e}")
+
     def _register_one_market(self, market: str, stock_code: str) -> list[str]:
         created = []
         for interval in ['daily', '120min', '90min', '60min']:
@@ -36,6 +48,7 @@ class WorkflowService:
                 db_manager.create_stock_table(market, table_name)
 
             if db_manager.get_latest_timestamp(market, table_name) is None:
+                logger.info(f"表 {table_name} 为空，立即拉取初始数据...")
                 try:
                     collect_and_store(market, stock_code, interval, skip_trading_check=True)
                 except Exception as e:
@@ -58,30 +71,23 @@ class WorkflowService:
     def register_stock(self, stock_input: str) -> dict:
         detections = detect_market(stock_input)
 
-        all_existing = []
+        all_workflows = []
+        is_new = False
         for market, stock_code in detections:
             existing = self.check_existing_workflows_for_code(market, stock_code)
             if existing:
-                all_existing.extend(existing)
-
-        if all_existing:
-            return {
-                'success': True,
-                'message': '工作流已存在',
-                'workflows': all_existing,
-                'markets': [{'market': d[0], 'stock_code': d[1]} for d in detections],
-            }
-
-        all_created = []
-        for market, stock_code in detections:
-            created = self._register_one_market(market, stock_code)
-            all_created.extend(created)
+                all_workflows.extend(existing)
+                self._fill_empty_tables(market, stock_code)
+            else:
+                is_new = True
+                created = self._register_one_market(market, stock_code)
+                all_workflows.extend(created)
 
         return {
             'success': True,
-            'message': '工作流已创建',
-            'workflows': all_created,
-            'markets': [{'market': m, 'stock_code': c} for m, c in detections],
+            'message': '工作流已创建' if is_new else '工作流已存在',
+            'workflows': all_workflows,
+            'markets': [{'market': d[0], 'stock_code': d[1]} for d in detections],
         }
 
     def get_stock_workflows(self, stock_code: str) -> list[dict]:

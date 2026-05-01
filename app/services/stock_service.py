@@ -195,6 +195,7 @@ def _fetch_stock_data_akshare(market: str, stock_code: str, interval: str):
 
 def _fetch_stock_data_yfinance(market: str, stock_code: str, interval: str):
     ticker_symbol = get_yfinance_ticker(market, stock_code)
+    logger.info(f"yfinance 拉取: {ticker_symbol} interval={interval}")
     ticker = yf.Ticker(ticker_symbol)
 
     config = Config.INTERVAL_MAP[interval]
@@ -204,11 +205,20 @@ def _fetch_stock_data_yfinance(market: str, stock_code: str, interval: str):
     import io
     import sys
     old_stderr = sys.stderr
-    sys.stderr = io.StringIO()
+    stderr_buf = io.StringIO()
+    sys.stderr = stderr_buf
     try:
         df = ticker.history(period=period, interval=yf_interval)
     finally:
         sys.stderr = old_stderr
+        stderr_content = stderr_buf.getvalue()
+        if stderr_content.strip():
+            logger.warning(f"yfinance stderr ({ticker_symbol}): {stderr_content.strip()}")
+
+    if df is None or df.empty:
+        logger.warning(f"yfinance 返回空数据: {ticker_symbol}")
+    else:
+        logger.info(f"yfinance 获取 {ticker_symbol} 数据 {len(df)} 行")
     return df
 
 
@@ -246,6 +256,7 @@ def collect_and_store(market: str, stock_code: str, interval: str, skip_trading_
 
     df = fetch_stock_data(market, stock_code, interval)
     if df.empty:
+        logger.warning(f"未获取到数据: {market}/{stock_code} {interval}")
         return 0
 
     table_name = get_table_name(market, stock_code, interval)
@@ -253,4 +264,5 @@ def collect_and_store(market: str, stock_code: str, interval: str, skip_trading_
         db_manager.create_stock_table(market, table_name)
 
     rows_inserted = db_manager.insert_data(market, table_name, df)
+    logger.info(f"写入 {rows_inserted} 条数据到 {table_name}")
     return rows_inserted
