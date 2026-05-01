@@ -158,7 +158,7 @@ def create_app():
 - `top_structure_100` / `bottom_structure_100`：100% 完成
 - `top_structure_level` / `bottom_structure_level`：级别（持续周期数）
 
-**DIF 取整**：`_round_dif(v) = int(abs(v) * 100)`，用于数值比较过滤噪声。
+**DIF 比较**：采用数量级前两位规则 `_magnitude_prefix(v, scale)`，统一除数后比较前两位数字，用于过滤微小数值扰动。
 
 #### sequence.py — 序列量化
 

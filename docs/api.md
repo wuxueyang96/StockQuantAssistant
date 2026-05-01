@@ -219,6 +219,18 @@ Base URL: `/api`
       "bottom_structure_100": false,
       "high9_signal": false,
       "low9_signal": false,
+      "trend_standard": {
+        "short_upper": 10.85,
+        "short_lower": 10.12,
+        "long_upper": 10.62,
+        "long_lower": 9.88
+      },
+      "structure_standard": {
+        "dif": 0.1523,
+        "dea": 0.1245,
+        "macd_dif_cross_dea_price": 10.35,
+        "macd_dif_turn_price": 10.28
+      },
       "position_history": { "current": 6.0, "prev": 10.0 }
     }
   ]
@@ -233,8 +245,28 @@ Base URL: `/api`
   "interval": "daily",
   "count": 2,
   "results": [
-    { "market": "hk", "market_label": "HK", "stock_code": "09988", "display_code": "09988.HK", "position": 6.0, "position_label": "重仓", "core_long": false, "core_short": false, "resonance_buy": false, "resonance_sell": false, "top_structure_75": false, "top_structure_100": false, "bottom_structure_75": false, "bottom_structure_100": false, "high9_signal": false, "low9_signal": false, "close": 85.5, "timestamp": "2026-04-25" },
-    { "market": "us", "market_label": "US", "stock_code": "BABA", "display_code": "BABA.US", "position": 4.0, "position_label": "轻仓", "core_long": false, "core_short": false, "resonance_buy": false, "resonance_sell": false, "top_structure_75": false, "top_structure_100": false, "bottom_structure_75": false, "bottom_structure_100": false, "high9_signal": false, "low9_signal": false, "close": 105.2, "timestamp": "2026-04-25" }
+    {
+      "market": "hk", "market_label": "HK", "stock_code": "09988", "display_code": "09988.HK",
+      "close": 85.5, "timestamp": "2026-04-25",
+      "position": 6.0, "position_label": "重仓",
+      "core_long": false, "core_short": false, "resonance_buy": false, "resonance_sell": false,
+      "top_structure_75": false, "top_structure_100": false,
+      "bottom_structure_75": false, "bottom_structure_100": false,
+      "high9_signal": false, "low9_signal": false,
+      "trend_standard": { "short_upper": 86.50, "short_lower": 82.30, "long_upper": 84.20, "long_lower": 80.10 },
+      "structure_standard": { "dif": 1.23, "dea": 1.05, "macd_dif_cross_dea_price": 84.80, "macd_dif_turn_price": 85.10 }
+    },
+    {
+      "market": "us", "market_label": "US", "stock_code": "BABA", "display_code": "BABA.US",
+      "close": 105.2, "timestamp": "2026-04-25",
+      "position": 4.0, "position_label": "轻仓",
+      "core_long": false, "core_short": false, "resonance_buy": false, "resonance_sell": false,
+      "top_structure_75": false, "top_structure_100": false,
+      "bottom_structure_75": false, "bottom_structure_100": false,
+      "high9_signal": false, "low9_signal": false,
+      "trend_standard": { "short_upper": 108.50, "short_lower": 102.30, "long_upper": 106.20, "long_lower": 100.10 },
+      "structure_standard": { "dif": 2.15, "dea": 1.98, "macd_dif_cross_dea_price": 104.50, "macd_dif_turn_price": 105.80 }
+    }
   ]
 }
 ```
@@ -255,6 +287,16 @@ Base URL: `/api`
 | `bottom_structure_100` | bool | 底部结构 100% 完成 |
 | `high9_signal` | bool | 高九卖出序列形成 |
 | `low9_signal` | bool | 低九买入序列形成 |
+| `trend_standard` | object | **下一交易日趋势量化标准**：收盘价需要突破/跌破的通道阈值 |
+| `trend_standard.short_upper` | float | 短期通道上轨 → 收盘价高于此值即短期趋势向上突破 |
+| `trend_standard.short_lower` | float | 短期通道下轨 → 收盘价低于此值即短期趋势向下破位 |
+| `trend_standard.long_upper` | float | 长期通道上轨 → 收盘价高于此值即长期趋势向上突破 |
+| `trend_standard.long_lower` | float | 长期通道下轨 → 收盘价低于此值即长期趋势向下破位 |
+| `structure_standard` | object | **下一周期结构量化标准**：触发结构信号的收盘价阈值 |
+| `structure_standard.dif` | float | 当前 DIF 值 |
+| `structure_standard.dea` | float | 当前 DEA 值 |
+| `structure_standard.macd_dif_cross_dea_price` | float | 收盘价触发 DIF 与 DEA 交叉（金叉/死叉 → 结构100%形成）的阈值 |
+| `structure_standard.macd_dif_turn_price` | float | 收盘价触发 DIF 拐头（结构75%形成或钝化打破）的阈值 |
 
 **响应** `400` — 数据不存在
 ```json

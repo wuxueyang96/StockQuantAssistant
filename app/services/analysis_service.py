@@ -38,7 +38,7 @@ def analyze_stock(stock_input: str, interval: str = 'daily') -> dict:
                 df = df.rename(columns={c: c.capitalize() for c in df.columns})
 
         try:
-            decision = _engine.evaluate(df)
+            summary = _engine.summary(df)
         except Exception as e:
             logger.error(f"决策引擎执行失败 ({market}/{stock_code}): {e}")
             results.append({
@@ -49,8 +49,7 @@ def analyze_stock(stock_input: str, interval: str = 'daily') -> dict:
             })
             continue
 
-        last = decision.dropna(subset=['position']).iloc[-1]
-        pos = last.get('position')
+        pos = summary.get('position')
         pos_label = POSITION_LABELS.get(pos, '未定')
 
         latest = {
@@ -58,19 +57,26 @@ def analyze_stock(stock_input: str, interval: str = 'daily') -> dict:
             'market_label': MARKET_LABEL[market],
             'stock_code': stock_code,
             'display_code': display_code,
-            'timestamp': str(last.name) if hasattr(last, 'name') else None,
-            'close': round(float(last.get('Close', 0)), 4) if pd.notna(last.get('Close')) else None,
-            'position': float(pos) if pd.notna(pos) else None,
+            'timestamp': summary.get('timestamp'),
+            'close': summary.get('close'),
+            'position': pos,
             'position_label': pos_label,
+            'core_long': summary.get('core_long', False),
+            'core_short': summary.get('core_short', False),
+            'resonance_buy': summary.get('resonance_buy', False),
+            'resonance_sell': summary.get('resonance_sell', False),
+            'top_structure_75': summary.get('top_structure_75', False),
+            'top_structure_100': summary.get('top_structure_100', False),
+            'bottom_structure_75': summary.get('bottom_structure_75', False),
+            'bottom_structure_100': summary.get('bottom_structure_100', False),
+            'high9_signal': summary.get('high9_signal', False),
+            'low9_signal': summary.get('low9_signal', False),
+            'trend_standard': summary.get('trend_standard', {}),
+            'structure_standard': summary.get('structure_standard', {}),
         }
 
-        for key in ['core_long', 'core_short', 'resonance_buy', 'resonance_sell',
-                     'top_structure_75', 'top_structure_100',
-                     'bottom_structure_75', 'bottom_structure_100',
-                     'high9_signal', 'low9_signal']:
-            val = last.get(key)
-            latest[key] = bool(val) if pd.notna(val) else False
-
+        # history
+        decision = _engine.evaluate(df)
         if 'position' in decision.columns:
             pos_series = decision['position'].dropna()
             if len(pos_series) > 0:

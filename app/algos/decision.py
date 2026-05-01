@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from app.algos.trend import TrendChannel
 from app.algos.structure import MACDStructure
 from app.algos.sequence import NineSequence
@@ -56,3 +57,36 @@ class DecisionEngine:
                 result.at[result.index[i], 'resonance_sell'] = True
 
         return result
+
+    def summary(self, df: pd.DataFrame) -> dict:
+        """返回最新决策摘要，包含下一交易日的趋势量化标准和结构量化标准。"""
+        trend_thresholds = self.trend.next_day_thresholds(df)
+        structure_thresholds = self.structure.next_period_thresholds(df)
+
+        decision = self.evaluate(df)
+        last = decision.dropna(subset=['position'])
+        if last.empty:
+            return {
+                'trend_standard': trend_thresholds,
+                'structure_standard': structure_thresholds,
+            }
+        last = last.iloc[-1]
+
+        pos = last.get('position')
+        return {
+            'position': float(pos) if pd.notna(pos) else None,
+            'core_long': bool(last.get('core_long', False)),
+            'core_short': bool(last.get('core_short', False)),
+            'resonance_buy': bool(last.get('resonance_buy', False)),
+            'resonance_sell': bool(last.get('resonance_sell', False)),
+            'top_structure_75': bool(last.get('top_structure_75', False)),
+            'top_structure_100': bool(last.get('top_structure_100', False)),
+            'bottom_structure_75': bool(last.get('bottom_structure_75', False)),
+            'bottom_structure_100': bool(last.get('bottom_structure_100', False)),
+            'high9_signal': bool(last.get('high9_signal', False)),
+            'low9_signal': bool(last.get('low9_signal', False)),
+            'close': round(float(last.get('Close', 0)), 4) if pd.notna(last.get('Close')) else None,
+            'timestamp': str(last.name) if hasattr(last, 'name') else None,
+            'trend_standard': trend_thresholds,
+            'structure_standard': structure_thresholds,
+        }

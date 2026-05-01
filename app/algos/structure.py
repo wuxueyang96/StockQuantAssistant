@@ -2,9 +2,20 @@ import pandas as pd
 import numpy as np
 
 
-def _round_dif(value: float) -> int:
-    """DIF 数值取整（乘 100 取整，保持比较单调性）"""
-    return int(abs(value) * 100)
+def _magnitude_prefix(value: float, scale: int = None) -> int:
+    """取数值数量级的前两位数字用于比较。
+
+    例如：168.93 → digits=3, scale=1 → prefix=16
+         85.23  → digits=2, scale=1 → prefix=8 (统一除数)
+    scale 由传入的参考值决定，None 时根据自身位数计算。
+    """
+    if value == 0 or np.isnan(value) or np.isinf(value):
+        return 0
+    abs_val = abs(value)
+    if scale is None:
+        digits = len(str(int(abs_val)))
+        scale = max(0, digits - 2)
+    return int(abs_val / 10**scale)
 
 
 class MACDStructure:
@@ -13,6 +24,9 @@ class MACDStructure:
         self.slow = slow
         self.signal = signal
         self.lookback = lookback
+        self.alpha_fast = 2.0 / (fast + 1)
+        self.alpha_slow = 2.0 / (slow + 1)
+        self.alpha_diff = self.alpha_fast - self.alpha_slow
 
     def compute_macd(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
@@ -21,6 +35,8 @@ class MACDStructure:
         result['dif'] = ema_fast - ema_slow
         result['dea'] = result['dif'].ewm(span=self.signal, adjust=False).mean()
         result['macd_hist'] = 2 * (result['dif'] - result['dea'])
+        result['_ema_fast'] = ema_fast
+        result['_ema_slow'] = ema_slow
         return result
 
     def evaluate(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -60,23 +76,28 @@ class MACDStructure:
             if pd.isna(dif) or pd.isna(dea):
                 continue
 
-            rounded_dif = _round_dif(dif)
-
             # --- top divergence logic ---
             if price_high > top_price_peak:
-                rounded_peak = _round_dif(top_dif_peak) if not np.isinf(top_dif_peak) else -1
-                if rounded_dif >= rounded_peak:
-                    if top_state in ('top_divergence', 'top_75'):
-                        top_state = 'normal'
+                if not np.isinf(top_dif_peak):
+                    scale = max(0, len(str(int(abs(top_dif_peak)))) - 2)
+                    cur_prefix = _magnitude_prefix(dif, scale)
+                    prev_prefix = _magnitude_prefix(top_dif_peak, scale)
+                    if cur_prefix >= prev_prefix:
+                        if top_state in ('top_divergence', 'top_75'):
+                            top_state = 'normal'
+                        top_price_peak = price_high
+                        top_dif_peak = dif
+                        top_dif_peak_idx = i
+                    else:
+                        if top_state == 'normal':
+                            top_state = 'top_divergence'
+                            top_div_start = i
+                        top_price_peak = price_high
+                        result.at[result.index[i], 'top_divergence'] = True
+                else:
                     top_price_peak = price_high
                     top_dif_peak = dif
                     top_dif_peak_idx = i
-                else:
-                    if top_state == 'normal':
-                        top_state = 'top_divergence'
-                        top_div_start = i
-                    top_price_peak = price_high
-                    result.at[result.index[i], 'top_divergence'] = True
 
             elif top_state == 'top_divergence':
                 result.at[result.index[i], 'top_divergence'] = True
@@ -97,19 +118,26 @@ class MACDStructure:
 
             # --- bottom divergence logic ---
             if price_low < bottom_price_valley:
-                rounded_valley = _round_dif(bottom_dif_valley) if not np.isinf(bottom_dif_valley) else 999999
-                if rounded_dif < rounded_valley:
-                    if bottom_state in ('bottom_divergence', 'bottom_75'):
-                        bottom_state = 'normal'
+                if not np.isinf(bottom_dif_valley):
+                    scale = max(0, len(str(int(abs(bottom_dif_valley)))) - 2)
+                    cur_prefix = _magnitude_prefix(dif, scale)
+                    prev_prefix = _magnitude_prefix(bottom_dif_valley, scale)
+                    if cur_prefix <= prev_prefix:
+                        if bottom_state in ('bottom_divergence', 'bottom_75'):
+                            bottom_state = 'normal'
+                        bottom_price_valley = price_low
+                        bottom_dif_valley = dif
+                        bottom_dif_valley_idx = i
+                    else:
+                        if bottom_state == 'normal':
+                            bottom_state = 'bottom_divergence'
+                            bottom_div_start = i
+                        bottom_price_valley = price_low
+                        result.at[result.index[i], 'bottom_divergence'] = True
+                else:
                     bottom_price_valley = price_low
                     bottom_dif_valley = dif
                     bottom_dif_valley_idx = i
-                else:
-                    if bottom_state == 'normal':
-                        bottom_state = 'bottom_divergence'
-                        bottom_div_start = i
-                    bottom_price_valley = price_low
-                    result.at[result.index[i], 'bottom_divergence'] = True
 
             elif bottom_state == 'bottom_divergence':
                 result.at[result.index[i], 'bottom_divergence'] = True
@@ -127,5 +155,42 @@ class MACDStructure:
                         result.at[result.index[i], 'bottom_structure_100'] = True
                         if bottom_div_start is not None:
                             result.at[result.index[i], 'bottom_structure_level'] = float(i - bottom_div_start)
+
+        return result
+
+    def next_period_thresholds(self, df: pd.DataFrame) -> dict:
+        """返回下一周期的结构量化标准 — 即下一根 K 线的收盘价触发各类结构信号的阈值。
+
+        基于 DIF = A + B * C 的线性关系反推：
+            A = EMA_fast_cur * (1 - αf) - EMA_slow_cur * (1 - αs)
+            B = αf - αs  (正数，因为快线 α 更大)
+            C_next = (DIF_target - A) / B
+        """
+        computed = self.compute_macd(df)
+        last = computed.iloc[-1]
+        result = {
+            'dif': round(float(last['dif']), 4) if pd.notna(last.get('dif')) else None,
+            'dea': round(float(last['dea']), 4) if pd.notna(last.get('dea')) else None,
+        }
+
+        ema_fast = last.get('_ema_fast')
+        ema_slow = last.get('_ema_slow')
+        if pd.isna(ema_fast) or pd.isna(ema_slow):
+            return result
+
+        A = ema_fast * (1 - self.alpha_fast) - ema_slow * (1 - self.alpha_slow)
+        B = self.alpha_diff
+        if abs(B) < 1e-10:
+            return result
+
+        dea_cur = last['dea']
+        if pd.notna(dea_cur):
+            cross_price = (dea_cur - A) / B
+            result['macd_dif_cross_dea_price'] = round(float(cross_price), 4)
+
+        dif_cur = last['dif']
+        if pd.notna(dif_cur):
+            turn_up_price = (dif_cur - A) / B
+            result['macd_dif_turn_price'] = round(float(turn_up_price), 4)
 
         return result

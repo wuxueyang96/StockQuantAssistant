@@ -3,7 +3,7 @@ import numpy as np
 
 
 class TrendChannel:
-    def __init__(self, short_period: int = 25, long_period: int = 90, offset_pct: float = 0.03):
+    def __init__(self, short_period: int = 26, long_period: int = 90, offset_pct: float = 0.03):
         self.short_period = short_period
         self.long_period = long_period
         self.offset_pct = offset_pct
@@ -11,15 +11,10 @@ class TrendChannel:
     def compute_all(self, df: pd.DataFrame) -> pd.DataFrame:
         result = df.copy()
 
-        short_max_high = df['High'].rolling(self.short_period).max()
-        short_min_low = df['Low'].rolling(self.short_period).min()
-        long_max_high = df['High'].rolling(self.long_period).max()
-        long_min_low = df['Low'].rolling(self.long_period).min()
-
-        result['short_upper'] = short_max_high.ewm(span=self.short_period, adjust=False).mean() * (1 + self.offset_pct)
-        result['short_lower'] = short_min_low.ewm(span=self.short_period, adjust=False).mean() * (1 - self.offset_pct)
-        result['long_upper'] = long_max_high.ewm(span=self.long_period, adjust=False).mean() * (1 + self.offset_pct)
-        result['long_lower'] = long_min_low.ewm(span=self.long_period, adjust=False).mean() * (1 - self.offset_pct)
+        result['short_upper'] = df['High'].ewm(span=self.short_period, adjust=False).mean() * (1 + self.offset_pct)
+        result['short_lower'] = df['Low'].ewm(span=self.short_period, adjust=False).mean() * (1 - self.offset_pct)
+        result['long_upper'] = df['High'].ewm(span=self.long_period, adjust=False).mean() * (1 + self.offset_pct)
+        result['long_lower'] = df['Low'].ewm(span=self.long_period, adjust=False).mean() * (1 - self.offset_pct)
 
         return result
 
@@ -56,3 +51,20 @@ class TrendChannel:
 
         result['position'] = positions
         return result
+
+    def next_day_thresholds(self, df: pd.DataFrame) -> dict:
+        """返回下一交易日的趋势量化标准（趋势线阈值），即收盘价需要突破的点位。
+
+        趋势只看日线收盘价。阈值就是双通道的上轨/下轨数值。
+        下一交易日的阈值 = 今日通道值（EMA 对新数据不敏感，可外推）。
+        """
+        result = self.compute_all(df)
+        last = result.iloc[-1]
+
+        thresholds = {
+            'short_upper': round(float(last['short_upper']), 4) if pd.notna(last.get('short_upper')) else None,
+            'short_lower': round(float(last['short_lower']), 4) if pd.notna(last.get('short_lower')) else None,
+            'long_upper': round(float(last['long_upper']), 4) if pd.notna(last.get('long_upper')) else None,
+            'long_lower': round(float(last['long_lower']), 4) if pd.notna(last.get('long_lower')) else None,
+        }
+        return thresholds

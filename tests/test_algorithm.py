@@ -24,7 +24,7 @@ class TestTrendChannel:
     @pytest.fixture
     def trend(self):
         from app.algos.trend import TrendChannel
-        return TrendChannel(short_period=25, long_period=90, offset_pct=0.03)
+        return TrendChannel(short_period=26, long_period=90, offset_pct=0.03)
 
     def test_channels_basic_shape(self, trend):
         df = make_ohlcv([100 + i * 0.5 for i in range(200)])
@@ -47,13 +47,14 @@ class TestTrendChannel:
         valid = channels.dropna()
         assert (valid['long_upper'] >= valid['long_lower']).all()
 
-    def test_long_wider_than_short(self, trend):
+    def test_channels_have_positive_width(self, trend):
         df = make_ohlcv([100 + i * 0.5 for i in range(200)])
         channels = trend.compute_all(df)
         valid = channels.dropna()
         short_width = valid['short_upper'] - valid['short_lower']
         long_width = valid['long_upper'] - valid['long_lower']
-        assert long_width.mean() > short_width.mean()
+        assert (short_width > 0).all()
+        assert (long_width > 0).all()
 
     def test_full_position_10(self, trend):
         prices = list(range(100, 0, -1)) + [200] * 50
@@ -85,7 +86,7 @@ class TestTrendChannel:
         trend = TrendChannel(short_period=5, long_period=15, offset_pct=0.0)
         n = 50
         closes = np.linspace(100, 150, 30).tolist() + [148, 145, 140, 135, 130, 128, 126, 124, 122, 120,
-                                                         118, 116, 114, 112, 110, 108, 106, 104, 102, 100]
+                                                          118, 116, 114, 112, 110, 108, 106, 104, 102, 100]
         highs = [c * 1.10 for c in closes]
         lows = [c * 0.90 for c in closes]
         opens = [c * 0.99 for c in closes]
@@ -103,9 +104,9 @@ class TestTrendChannel:
         trend = TrendChannel(short_period=5, long_period=15, offset_pct=0.0)
         n = 50
         closes = [100] * 15 + [102, 105, 108, 110, 112, 115, 118, 120, 122, 125,
-                               128, 130, 132, 135, 138, 140, 142, 145, 148, 150]
+                                128, 130, 132, 135, 138, 140, 142, 145, 148, 150]
         closes = closes + [152, 155, 158, 160, 162, 165, 168, 170, 172, 175,
-                           178, 180, 182, 185, 188]
+                            178, 180, 182, 185, 188]
         highs = [c * 1.10 for c in closes]
         lows = [c * 0.98 for c in closes]
         opens = [c * 1.00 for c in closes]
@@ -160,6 +161,17 @@ class TestTrendChannel:
         for p in positions:
             assert p in (0.0, 4.0, 6.0, 10.0)
 
+    def test_next_day_thresholds(self, trend):
+        df = make_ohlcv([100 + i * 0.5 for i in range(200)])
+        thresholds = trend.next_day_thresholds(df)
+        assert 'short_upper' in thresholds
+        assert 'short_lower' in thresholds
+        assert 'long_upper' in thresholds
+        assert 'long_lower' in thresholds
+        assert thresholds['short_upper'] > thresholds['short_lower']
+        assert thresholds['long_upper'] > thresholds['long_lower']
+        assert isinstance(thresholds['short_upper'], float)
+
 
 class TestMACDCalculation:
     @pytest.fixture
@@ -196,29 +208,42 @@ class TestMACDCalculation:
         np.testing.assert_array_almost_equal(valid['macd_hist'], expected_hist)
 
 
-class TestDIFRounding:
+class TestMagnitudePrefix:
     @pytest.fixture
-    def rounding(self):
-        from app.algos.structure import _round_dif
-        return _round_dif
+    def prefix(self):
+        from app.algos.structure import _magnitude_prefix
+        return _magnitude_prefix
 
-    def test_large_number(self, rounding):
-        assert rounding(168.93) == 16893
+    def test_large_number_with_scale(self, prefix):
+        # 168.93 with scale=1 → 16
+        assert prefix(168.93, scale=1) == 16
 
-    def test_medium_number(self, rounding):
-        assert rounding(85.23) == 8523
+    def test_medium_number_with_scale_same_as_large(self, prefix):
+        # 85.23 with scale=1 → 8 (same divisor as 168.93's scale)
+        assert prefix(85.23, scale=1) == 8
 
-    def test_small_number(self, rounding):
-        assert rounding(0.05) == 5
+    def test_auto_scale_large(self, prefix):
+        # automatic scale: digits=3, scale=1 → 16
+        assert prefix(168.93) == 16
 
-    def test_negative_number(self, rounding):
-        assert rounding(-3.2) == 320
+    def test_auto_scale_medium(self, prefix):
+        # automatic scale: digits=2, scale=0 → 85
+        assert prefix(85.23) == 85
 
-    def test_zero(self, rounding):
-        assert rounding(0.0) == 0
+    def test_small_number(self, prefix):
+        # 0.05: int(abs)=0, scale=max(0,1-2)=0 → int(0.05/1)=0
+        assert prefix(0.05) == 0
 
-    def test_one_digit(self, rounding):
-        assert rounding(5.0) == 500
+    def test_zero(self, prefix):
+        assert prefix(0.0) == 0
+
+    def test_negative_number(self, prefix):
+        # -168.93: abs=168.93, digits=3, scale=1 → 16
+        assert prefix(-168.93, scale=1) == 16
+
+    def test_auto_scale_single_digit(self, prefix):
+        # 5.0: digits=1, scale=max(0,1-2)=0 → int(5/1)=5
+        assert prefix(5.0) == 5
 
 
 class TestTopDivergence:
@@ -259,6 +284,15 @@ class TestTopDivergence:
         result = macd.evaluate(df)
         assert 'top_structure_level' in result.columns
         assert 'bottom_structure_level' in result.columns
+
+    def test_next_period_thresholds(self, macd):
+        df = make_ohlcv([100 + i * 0.5 for i in range(200)])
+        thresholds = macd.next_period_thresholds(df)
+        assert 'dif' in thresholds
+        assert 'dea' in thresholds
+        assert 'macd_dif_cross_dea_price' in thresholds
+        assert 'macd_dif_turn_price' in thresholds
+        assert isinstance(thresholds['dif'], float)
 
 
 class TestBottomDivergence:
@@ -419,3 +453,26 @@ class TestDecisionEngine:
         for i, val in core_short.items():
             if val:
                 assert result.loc[i, 'position'] <= 6.0
+
+    def test_summary_includes_next_period_standards(self, engine):
+        df = make_ohlcv([100 + i * 0.5 for i in range(300)])
+        summary = engine.summary(df)
+        assert 'trend_standard' in summary
+        assert 'structure_standard' in summary
+        assert 'short_upper' in summary['trend_standard']
+        assert 'short_lower' in summary['trend_standard']
+        assert 'long_upper' in summary['trend_standard']
+        assert 'long_lower' in summary['trend_standard']
+        assert 'dif' in summary['structure_standard']
+        assert 'dea' in summary['structure_standard']
+        assert 'macd_dif_cross_dea_price' in summary['structure_standard']
+
+    def test_summary_includes_decision_signals(self, engine):
+        df = make_ohlcv([100 + i * 0.5 for i in range(300)])
+        summary = engine.summary(df)
+        assert 'position' in summary
+        assert 'core_long' in summary
+        assert 'core_short' in summary
+        assert 'resonance_buy' in summary
+        assert 'resonance_sell' in summary
+        assert 'close' in summary

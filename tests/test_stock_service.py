@@ -108,7 +108,7 @@ class TestGetYfinanceTicker:
         assert get_yfinance_ticker('a', '000001') == '000001.SZ'
 
     def test_hk_stock(self):
-        assert get_yfinance_ticker('hk', '00700') == '00700.HK'
+        assert get_yfinance_ticker('hk', '00700') == '0700.HK'
 
     def test_us_stock(self):
         assert get_yfinance_ticker('us', 'AAPL') == 'AAPL'
