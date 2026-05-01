@@ -6,7 +6,8 @@
 
 ```
 StockQuantAssisant/
-├── run.py                         # 启动入口
+├── pyproject.toml                 # 包元数据（pip install）
+├── run.py                         # 启动入口 / WSGI callable
 ├── requirements.txt               # 依赖
 ├── docs/
 │   ├── api.md                     # API 文档
@@ -45,22 +46,37 @@ StockQuantAssisant/
 
 ## 快速开始
 
-### 安装依赖
-
+### 方式一：pip install（推荐）
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
 
-### 启动服务
-
+安装后直接用命令行启动：
 ```bash
-python run.py --host 0.0.0.0 --port 5000
+stockquant-server --host 0.0.0.0 --port 5000
 ```
 
 可选参数：
 - `--host` : 监听地址（默认 `0.0.0.0`）
 - `--port` : 监听端口（默认 `5000`）
 - `--debug` : 开启调试模式
+
+WSGI 部署（gunicorn）：
+```bash
+gunicorn "run:app" -w 4 -b 0.0.0.0:5000
+```
+
+### 方式二：源码运行
+```bash
+pip install -r requirements.txt
+python run.py --host 0.0.0.0 --port 5000
+```
+
+### 配置
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `STOCKQUANT_DATA_DIR` | 数据库文件存放目录 | `~/.stockquant/data/` |
 
 ### 运行测试
 

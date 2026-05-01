@@ -33,7 +33,7 @@ def shutdown_scheduler(exception=None):
     pass
 
 
-if __name__ == '__main__':
+def main():
     args = parse_args()
     try:
         logger.info(f"启动股票量化助手服务... {args.host}:{args.port} debug={args.debug}")
@@ -45,3 +45,7 @@ if __name__ == '__main__':
         job_scheduler.shutdown()
         db_manager.close_all()
         logger.info("服务已关闭")
+
+
+if __name__ == '__main__':
+    main()

@@ -1,10 +1,15 @@
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _get_data_dir():
+    env = os.environ.get('STOCKQUANT_DATA_DIR')
+    if env:
+        return env
+    return os.path.join(os.path.expanduser('~'), '.stockquant', 'data')
 
 
 class Config:
-    DATA_DIR = os.path.join(BASE_DIR, 'data')
+    DATA_DIR = _get_data_dir()
     METADATA_DB_PATH = os.path.join(DATA_DIR, 'metadata.db')
 
     DB_PATHS = {
