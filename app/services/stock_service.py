@@ -240,8 +240,8 @@ def get_table_name(market: str, stock_code: str, interval: str) -> str:
     return get_workflow_id(market, stock_code, interval)
 
 
-def collect_and_store(market: str, stock_code: str, interval: str) -> int:
-    if not is_trading_time(market):
+def collect_and_store(market: str, stock_code: str, interval: str, skip_trading_check: bool = False) -> int:
+    if not skip_trading_check and not is_trading_time(market):
         return 0
 
     df = fetch_stock_data(market, stock_code, interval)

@@ -34,8 +34,10 @@ class WorkflowService:
 
             if not db_manager.table_exists(market, table_name):
                 db_manager.create_stock_table(market, table_name)
+
+            if db_manager.get_latest_timestamp(market, table_name) is None:
                 try:
-                    collect_and_store(market, stock_code, interval)
+                    collect_and_store(market, stock_code, interval, skip_trading_check=True)
                 except Exception as e:
                     logger.warning(f"数据拉取失败 ({wf_id}): {e}，工作流已注册但暂无数据")
 
