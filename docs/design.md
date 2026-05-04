@@ -9,7 +9,7 @@ StockQuantAssisant 是一个基于 Python + Flask 的股票数据采集、量化
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    run.py (入口)                      │
-│  Flask app 创建 → APScheduler 启动 → HTTP 服务      │
+│  OSS sync_down → Flask app → APScheduler → sync_up │
 └──────────┬─────────────────────┬────────────────────┘
            │                     │
     ┌──────▼──────┐       ┌──────▼──────────┐
@@ -24,6 +24,7 @@ StockQuantAssisant 是一个基于 Python + Flask 的股票数据采集、量化
     │  │ workflow_service  (工作流管理)   │    │
     │  │ stock_service     (股票识别/采集)│    │
     │  │ analysis_service  (量化分析)     │    │
+    │  │ oss_sync          (OSS 数据同步) │    │
     │  └─────────────────────────────────┘    │
     └──────┬──────────────────┬───────────────┘
            │                  │
@@ -33,7 +34,13 @@ StockQuantAssisant 是一个基于 Python + Flask 的股票数据采集、量化
     │  structure   │    │  (DuckDB CRUD    │
     │  sequence    │    │   + 元数据管理)   │
     │  decision    │    │                  │
-    └──────────────┘    └──────────────────┘
+    └──────────────┘    └──────┬───────────┘
+                               │
+                        ┌──────▼──────────┐
+                        │   外部存储 (OSS)  │
+                        │   S3 / 阿里云 OSS │
+                        │   *.db 文件持久化  │
+                        └──────────────────┘
 ```
 
 ## 3. 模块设计
@@ -52,13 +59,14 @@ def create_app():
 
 | 配置项 | 说明 |
 |--------|------|
-| `DATA_DIR` | `data/` 目录路径 |
+| `DATA_DIR` | `data/` 目录路径（默认 `~/.stockquant/data/`，可通过 `STOCKQUANT_DATA_DIR` 环境变量覆盖） |
 | `METADATA_DB_PATH` | 元数据库路径 `data/metadata.db` |
 | `DB_PATHS` | 三市场 DB 路径：`a_stock.db` / `hk_stock.db` / `us_stock.db` |
 | `INTERVAL_MAP` | 周期 → yfinance(period, interval) 映射 |
 | `INTERVAL_MINUTES` | 周期 → 调度间隔（分钟） |
 | `YFINANCE_TICKER_MAP` | 市场 → yfinance ticker 转换函数 |
 | `TRADING_HOURS` | 各市场交易时段和时区 |
+| OSS 相关 | 见 [§3.8 stateless 部署](#38-stateless-部署--oss-状态同步) |
 
 ### 3.3 API 层 — app/api/routes.py
 
@@ -210,6 +218,53 @@ def create_app():
 - `load_all_workflows()` → 从 `workflow_service.workflows` 加载所有活跃工作流
 - 非业务时间自动跳过（`is_trading_time` 判断）
 
+### 3.8 stateless 部署 & OSS 状态同步
+
+项目支持 **计算与数据分离** 的 stateless 部署模式，可将 DuckDB 数据文件外挂到云对象存储（S3 / 阿里云 OSS / MinIO 等兼容 S3 API 的存储），实现：
+
+- **启动时**：从 OSS 下载 `*.db` 文件到本地临时目录
+- **停止时**：将 `*.db` 文件上传回 OSS
+
+镜像始终保持不变，无需每天重建。典型云部署场景：每天上午 9 点启动一个实例运行一小时，做完决策分析后自动退出。
+
+#### 环境变量
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `OSS_BUCKET` | 是 | Bucket 名称，不设则保持本地模式 |
+| `OSS_ENDPOINT` | 否 | S3 兼容 Endpoint URL（阿里云 OSS: `https://oss-cn-hangzhou.aliyuncs.com`） |
+| `OSS_REGION` | 否 | 区域（默认 `us-east-1`） |
+| `OSS_ACCESS_KEY_ID` | 否 | Access Key（不设则使用 IAM 角色 / 实例元数据） |
+| `OSS_ACCESS_KEY_SECRET` | 否 | Secret Key |
+| `OSS_KEY_PREFIX` | 否 | Bucket 内目录前缀（如 `stockquant/prod/`） |
+| `STOCKQUANT_DATA_DIR` | 否 | 本地数据目录（云函数内建议指向 `/tmp/`） |
+
+#### 认证方式
+
+- **IAM 角色（推荐）**：不设 AK/SK，boto3 自动从云平台元数据服务获取
+- **手动 AK/SK**：设置 `OSS_ACCESS_KEY_ID` + `OSS_ACCESS_KEY_SECRET`
+
+#### 生命周期
+
+```
+服务启动 → sync_down (拉取 *.db)
+         → Flask + APScheduler 运行（数据采集 + 量化分析）
+         → sync_up (推送 *.db 回 OSS) → 退出
+```
+
+代码实现：`app/services/oss_sync.py`，在 `run.py` 的 `cmd_start` 中自动调用。
+
+#### 示例（阿里云函数计算 + OSS）
+
+```bash
+export OSS_BUCKET=stockquant-data
+export OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+export OSS_ACCESS_KEY_ID=xxx
+export OSS_ACCESS_KEY_SECRET=xxx
+export STOCKQUANT_DATA_DIR=/tmp/stockquant
+stockquant-server start --host 0.0.0.0 --port 5000
+```
+
 ## 4. 数据流
 
 ```
@@ -252,6 +307,7 @@ POST /api/stock/decision {"stock": "阿里巴巴"}
 | DIF 取整 `×100` | 单调保留比较顺序，避免小数值截断导致的假背离 |
 | 三级决策整合 | 算法文档的层次化设计：趋势定仓位 → 结构定方向 → 序列精调入口 |
 | 延迟加载 WorkflowService | 避免模块导入时 DB 未就绪的问题 |
+| OSS 状态同步（计算存储分离） | 通过 boto3 对接 S3 兼容存储，支持 stateless 部署，按需运行降本 |
 
 ## 6. 项目结构
 
@@ -259,6 +315,7 @@ POST /api/stock/decision {"stock": "阿里巴巴"}
 StockQuantAssisant/
 ├── run.py
 ├── requirements.txt
+├── pyproject.toml
 ├── docs/
 │   ├── api.md
 │   ├── server.md
@@ -287,24 +344,30 @@ StockQuantAssisant/
 │       ├── __init__.py
 │       ├── stock_service.py
 │       ├── workflow_service.py
-│       └── analysis_service.py
-├── data/                      # gitignore
-└── tests/
-    ├── conftest.py
-    ├── test_algorithm.py
-    ├── test_api.py
-    ├── test_database.py
-    ├── test_integration.py
-    ├── test_stock_service.py
-    └── test_workflow_service.py
+│       ├── analysis_service.py
+│       └── oss_sync.py         ← OSS 状态同步
+├── tests/
+│   ├── conftest.py
+│   ├── test_algorithm.py
+│   ├── test_api.py
+│   ├── test_database.py
+│   ├── test_integration.py
+│   ├── test_stock_service.py
+│   ├── test_workflow_service.py
+│   └── test_oss_sync.py        ← OSS 同步单测
+└── e2e/
+    ├── run.py
+    └── test_oss.py             ← OSS 端到端测试
 ```
 
 ## 7. 测试
 
-基于 pytest，共 126 个测试用例，运行：
+基于 pytest，共 148 个单元测试 + 18 个 OSS E2E 检查点，运行：
 
 ```bash
-pytest tests/ -v
+pytest tests/ -v          # 单元测试
+python3 e2e/test_oss.py   # OSS 端到端测试 (moto 模拟 S3)
+python3 e2e/test_oss.py --minio  # OSS 端到端测试 (真实 MinIO)
 ```
 
-测试覆盖：股票识别、数据库 CRUD、工作流管理、API 端点、三个量化算法、决策引擎、集成流程。测试使用 `tempfile` 隔离数据库和文件系统。
+测试覆盖：股票识别、数据库 CRUD、工作流管理、API 端点、三个量化算法、决策引擎、集成流程、OSS 状态同步（mock + moto 模拟 S3）。测试使用 `tempfile` 隔离数据库和文件系统。

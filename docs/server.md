@@ -66,15 +66,39 @@
 
 #### 6. 工作流持久化
 
-- 所有已注册的工作流（及其调度配置）需要**持久化存储**（例如使用本地文件、数据库或任务调度系统的持久化机制）。
+- 所有已注册的工作流（及其调度配置）需要**持久化存储**（使用 DuckDB 元数据表）。
 - 服务重启时，自动加载所有已存在的工作流，恢复定时调度，无需重新注册。
+- 支持 **stateless 部署模式**：通过 OSS 对象存储（S3 / 阿里云 OSS / MinIO）在实例间同步 DuckDB 数据文件，实现计算与数据分离。
+
+#### 7. Stateless 部署 (OSS 状态同步)
+
+项目支持将 DuckDB 数据文件外挂到云对象存储，实现按需运行的 stateless 部署：
+
+- **启动自动拉取**：服务启动时从 OSS 下载所有 `*.db` 文件
+- **停止自动推送**：服务停止时将 `*.db` 文件上传回 OSS
+- **镜像不变**：无需每天重新构建 Docker 镜像
+
+环境变量：
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `OSS_BUCKET` | 是 | Bucket 名称，不设则保持本地模式 |
+| `OSS_ENDPOINT` | 否 | S3 兼容 Endpoint（如 `https://oss-cn-hangzhou.aliyuncs.com`） |
+| `OSS_REGION` | 否 | 区域（默认 `us-east-1`） |
+| `OSS_ACCESS_KEY_ID` | 否 | Access Key（不设则使用 IAM 角色） |
+| `OSS_ACCESS_KEY_SECRET` | 否 | Secret Key |
+| `OSS_KEY_PREFIX` | 否 | Bucket 内目录前缀 |
+| `STOCKQUANT_DATA_DIR` | 否 | 本地数据目录（云函数内建议指向 `/tmp/`） |
+
+> **认证方式**：IAM 角色（推荐，不设 AK/SK）或手动 AK/SK 两种方式均支持。
 
 ---
 
-#### 7. 技术要求
+#### 8. 技术要求
 
 - 使用 **Python** 开发。
-- 暴露 **REST API**（建议使用 FastAPI、Flask 等框架）。
+- 暴露 **REST API**（使用 Flask 框架）。
 - 数据存储：**DuckDB**，不同市场使用不同数据库文件。
-- 任务调度：可使用 `APScheduler`、`Celery` 或 `asyncio` 实现周期性任务。
-- 数据源：需自行对接金融数据 API（如 yfinance、akshare、tushare 等），本描述不指定具体数据源。
+- 任务调度：使用 `APScheduler` 实现周期性任务。
+- 状态同步：使用 `boto3` 对接 S3 兼容存储（S3 / 阿里云 OSS / MinIO），支持 stateless 部署。
+- 数据源：使用 akshare（A 股）+ yfinance（港股、美股）双数据源。
