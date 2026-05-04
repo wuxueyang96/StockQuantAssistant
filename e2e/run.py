@@ -21,12 +21,7 @@ def setup():
     tmpdir = tempfile.mkdtemp(prefix='stockquant_e2e_')
     from app.config import Config
     Config.DATA_DIR = tmpdir
-    Config.METADATA_DB_PATH = os.path.join(tmpdir, 'metadata.db')
-    Config.DB_PATHS = {
-        'a': os.path.join(tmpdir, 'a_stock.db'),
-        'hk': os.path.join(tmpdir, 'hk_stock.db'),
-        'us': os.path.join(tmpdir, 'us_stock.db'),
-    }
+    Config.OSS_BUCKET = None
     return tmpdir
 
 

@@ -25,11 +25,9 @@ class TestCollectAndStore:
         from app.models.database import db_manager
 
         Config.DATA_DIR = temp_db_dir
-        Config.DB_PATHS = {
-            'a': os.path.join(temp_db_dir, 'a_stock.db'),
-            'hk': os.path.join(temp_db_dir, 'hk_stock.db'),
-            'us': os.path.join(temp_db_dir, 'us_stock.db'),
-        }
+        Config.OSS_BUCKET = None
+        db_manager.close_all()
+        db_manager.__init__()
 
         mock_ticker = MagicMock()
         mock_ticker.history.return_value = mock_yf_data
@@ -39,7 +37,6 @@ class TestCollectAndStore:
              patch('app.services.stock_service.yf.Ticker', return_value=mock_ticker):
             yield
         db_manager.close_all()
-        db_manager._connections.clear()
 
     def test_collect_creates_table(self, setup_collect):
         from app.services.stock_service import collect_and_store
@@ -74,14 +71,13 @@ class TestCollectAndStore:
 class TestDatabaseMetadata:
     @pytest.fixture
     def meta_db(self, temp_db_dir):
-        from app.config import Config
         Config.DATA_DIR = temp_db_dir
-        Config.METADATA_DB_PATH = os.path.join(temp_db_dir, 'metadata.db')
+        Config.OSS_BUCKET = None
         from app.models.database import db_manager
-        db_manager._connections.clear()
+        db_manager.close_all()
+        db_manager.__init__()
         yield db_manager
         db_manager.close_all()
-        db_manager._connections.clear()
 
     def test_upsert_and_get(self, meta_db):
         meta_db.upsert_stock_code('阿里巴巴', hk_code='09988', us_code='BABA')
@@ -120,12 +116,9 @@ class TestIntegration:
         from app.models.database import db_manager
 
         Config.DATA_DIR = temp_db_dir
-        Config.METADATA_DB_PATH = os.path.join(temp_db_dir, 'metadata.db')
-        Config.DB_PATHS = {
-            'a': os.path.join(temp_db_dir, 'a_stock.db'),
-            'hk': os.path.join(temp_db_dir, 'hk_stock.db'),
-            'us': os.path.join(temp_db_dir, 'us_stock.db'),
-        }
+        Config.OSS_BUCKET = None
+        db_manager.close_all()
+        db_manager.__init__()
 
         dates = pd.date_range('2024-01-01', periods=300, freq='B')
         df = pd.DataFrame({
@@ -147,7 +140,6 @@ class TestIntegration:
             yield
 
         db_manager.close_all()
-        db_manager._connections.clear()
 
     def test_full_register_single(self, full_setup):
         from app.services.workflow_service import workflow_service
@@ -164,7 +156,6 @@ class TestIntegration:
 
         db_manager.upsert_stock_code('阿里巴巴', hk_code='09988', us_code='BABA')
         workflow_service.workflows = {}
-
         result = workflow_service.register_stock('阿里巴巴')
         assert result['success'] is True
         assert len(result['workflows']) == 8

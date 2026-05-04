@@ -2,45 +2,45 @@
 
 ## 1. 概述
 
-StockQuantAssisant 是一个基于 Python + Flask 的股票数据采集、量化分析与任务调度系统，支持 A 股 / 港股 / 美股三个市场，提供多周期历史数据同步和量化交易信号输出。
+StockQuantAssisant 是一个基于 Python + Flask 的股票数据采集、量化分析与任务调度系统，支持 A 股 / 港股 / 美股三个市场。数据以 **Parquet 列存格式** 直接存储在 **云对象存储 (S3 / OSS)** 上，通过 DuckDB 的 httpfs 扩展远程读写，实现真正的 **存算分离** 和无状态部署。
 
 ## 2. 架构总览
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    run.py (入口)                      │
-│  OSS sync_down → Flask app → APScheduler → sync_up │
-└──────────┬─────────────────────┬────────────────────┘
-           │                     │
-    ┌──────▼──────┐       ┌──────▼──────────┐
-    │  API 层      │       │  调度层          │
-    │  routes.py   │◄──────│  job_scheduler   │
-    │              │       │  (APScheduler)   │
-    └──────┬───────┘       └──────┬───────────┘
+┌──────────────────────────────────────────────────────┐
+│                     run.py (入口)                      │
+│     Flask app 创建 → APScheduler 启动 → HTTP 服务     │
+└──────────┬──────────────────────┬────────────────────┘
            │                      │
-    ┌──────▼──────────────────────▼───────────┐
-    │              Service 层                  │
-    │  ┌─────────────────────────────────┐    │
-    │  │ workflow_service  (工作流管理)   │    │
-    │  │ stock_service     (股票识别/采集)│    │
-    │  │ analysis_service  (量化分析)     │    │
-    │  │ oss_sync          (OSS 数据同步) │    │
-    │  └─────────────────────────────────┘    │
-    └──────┬──────────────────┬───────────────┘
+    ┌──────▼──────┐        ┌──────▼──────────┐
+    │  API 层      │        │  调度层          │
+    │  routes.py   │◄───────│  job_scheduler   │
+    │              │        │  (APScheduler)   │
+    └──────┬───────┘        └──────┬───────────┘
+           │                       │
+    ┌──────▼───────────────────────▼──────────┐
+    │              Service 层                   │
+    │  ┌──────────────────────────────────┐    │
+    │  │ workflow_service  (工作流管理)    │    │
+    │  │ stock_service     (股票识别/采集) │    │
+    │  │ analysis_service  (量化分析)      │    │
+    │  └──────────────────────────────────┘    │
+    └──────┬──────────────────┬────────────────┘
            │                  │
-    ┌──────▼──────┐    ┌──────▼──────────┐
-    │  Algos 层    │    │  Model 层        │
-    │  trend       │    │  database.py     │
-    │  structure   │    │  (DuckDB CRUD    │
-    │  sequence    │    │   + 元数据管理)   │
-    │  decision    │    │                  │
-    └──────────────┘    └──────┬───────────┘
-                               │
-                        ┌──────▼──────────┐
-                        │   外部存储 (OSS)  │
-                        │   S3 / 阿里云 OSS │
-                        │   *.db 文件持久化  │
-                        └──────────────────┘
+    ┌──────▼──────┐    ┌──────▼───────────────┐
+    │  Algos 层    │    │  Model 层             │
+    │  trend       │    │  database.py          │
+    │  structure   │    │  (DuckDB httpfs 引擎   │
+    │  sequence    │    │   + Parquet on OSS)    │
+    │  decision    │    │                       │
+    └──────────────┘    └──────┬────────────────┘
+                               │ read_parquet / COPY TO
+                        ┌──────▼────────────────┐
+                        │   外部存储 (S3 / OSS)   │
+                        │   Parquet 列存文件      │
+                        │   metadata/stock_codes  │
+                        │   {market}/{table}.pq    │
+                        └─────────────────────────┘
 ```
 
 ## 3. 模块设计
@@ -59,14 +59,12 @@ def create_app():
 
 | 配置项 | 说明 |
 |--------|------|
-| `DATA_DIR` | `data/` 目录路径（默认 `~/.stockquant/data/`，可通过 `STOCKQUANT_DATA_DIR` 环境变量覆盖） |
-| `METADATA_DB_PATH` | 元数据库路径 `data/metadata.db` |
-| `DB_PATHS` | 三市场 DB 路径：`a_stock.db` / `hk_stock.db` / `us_stock.db` |
+| `DATA_DIR` | 本地临时目录（仅在不配置 OSS 时使用，默认 `~/.stockquant/data/`） |
 | `INTERVAL_MAP` | 周期 → yfinance(period, interval) 映射 |
 | `INTERVAL_MINUTES` | 周期 → 调度间隔（分钟） |
 | `YFINANCE_TICKER_MAP` | 市场 → yfinance ticker 转换函数 |
 | `TRADING_HOURS` | 各市场交易时段和时区 |
-| OSS 相关 | 见 [§3.8 stateless 部署](#38-stateless-部署--oss-状态同步) |
+| OSS 配置 | 见 [§3.8 stateless 部署 & Parquet on OSS](#38-stateless-部署--parquet-on-oss) |
 
 ### 3.3 API 层 — app/api/routes.py
 
@@ -196,18 +194,16 @@ def create_app():
 
 ### 3.6 Model 层 — app/models/database.py
 
-`DatabaseManager` 管理所有 DuckDB 连接：
+`DatabaseManager` 基于 DuckDB 的 httpfs 扩展实现 Parquet on OSS 存算分离：
 
-- **市场数据连接**：`get_connection(market)` → `a_stock.db` / `hk_stock.db` / `us_stock.db`
-- **元数据连接**：`_get_metadata_conn()` → `metadata.db`
+- **运行时**：单例 DuckDB 内存连接，加载 httpfs 扩展并配置 S3/OSS 凭证
+- **OHLCV 数据**：每个 stock/interval 一个 Parquet 文件，路径 `s3://bucket/{market}/{table}.parquet`，通过 `read_parquet` / `COPY ... TO` 直接远程读写，零本地磁盘
+- **元数据**（stock_codes / workflows）：启动时从 OSS Parquet 加载到内存表，写操作实时刷新到 OSS
 
 提供方法：
-- 股票数据：`create_stock_table` / `insert_data` / `get_data` / `table_exists` / `get_latest_timestamp`
+- 股票数据：`table_exists` / `create_stock_table` / `insert_data` / `get_data` / `get_latest_timestamp`
 - 元数据：`upsert_stock_code` / `get_stock_codes` / `get_all_stock_codes` / `delete_stock_code`
 - 工作流：`save_workflow` / `load_workflows` / `delete_workflow_by_id`
-- 自动迁移：检测旧表结构并重建
-
-详见 [db_table.md](db_table.md)。
 
 ### 3.7 调度层 — app/scheduler/job_scheduler.py
 
@@ -218,50 +214,59 @@ def create_app():
 - `load_all_workflows()` → 从 `workflow_service.workflows` 加载所有活跃工作流
 - 非业务时间自动跳过（`is_trading_time` 判断）
 
-### 3.8 stateless 部署 & OSS 状态同步
+### 3.8 stateless 部署 & Parquet on OSS
 
-项目支持 **计算与数据分离** 的 stateless 部署模式，可将 DuckDB 数据文件外挂到云对象存储（S3 / 阿里云 OSS / MinIO 等兼容 S3 API 的存储），实现：
+数据以 **Parquet 列存格式** 直接存储在 OSS 上，DuckDB 通过 httpfs 扩展远程读写，**零本地磁盘**。
 
-- **启动时**：从 OSS 下载 `*.db` 文件到本地临时目录
-- **停止时**：将 `*.db` 文件上传回 OSS
+#### 存储结构
 
-镜像始终保持不变，无需每天重建。典型云部署场景：每天上午 9 点启动一个实例运行一小时，做完决策分析后自动退出。
+```
+s3://{bucket}/
+├── metadata/
+│   ├── stock_codes.parquet
+│   └── workflows.parquet
+├── a/
+│   ├── A_600519_daily.parquet
+│   ├── A_600519_60min.parquet
+│   └── ...
+├── hk/
+│   └── HK_09988_daily.parquet
+└── us/
+    └── US_BABA_daily.parquet
+```
+
+#### 读写流程
+
+```
+数据采集:  fetch → DataFrame → merge with existing → COPY TO 's3://...' (Parquet)
+                                                                         ↑
+量化分析:  read_parquet('s3://...') → DuckDB 谓词下推/列裁剪 → DataFrame → algo
+                                     ↑ 只传输需要的行和列，非整文件下载
+```
 
 #### 环境变量
 
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `OSS_BUCKET` | 是 | Bucket 名称，不设则保持本地模式 |
-| `OSS_ENDPOINT` | 否 | S3 兼容 Endpoint URL（阿里云 OSS: `https://oss-cn-hangzhou.aliyuncs.com`） |
-| `OSS_REGION` | 否 | 区域（默认 `us-east-1`） |
-| `OSS_ACCESS_KEY_ID` | 否 | Access Key（不设则使用 IAM 角色 / 实例元数据） |
-| `OSS_ACCESS_KEY_SECRET` | 否 | Secret Key |
-| `OSS_KEY_PREFIX` | 否 | Bucket 内目录前缀（如 `stockquant/prod/`） |
-| `STOCKQUANT_DATA_DIR` | 否 | 本地数据目录（云函数内建议指向 `/tmp/`） |
+| 变量 | 说明 |
+|------|------|
+| `OSS_BUCKET` | Bucket 名称，不设使用本地 Parquet |
+| `OSS_ENDPOINT` | S3 兼容 Endpoint（阿里云: `https://oss-cn-hangzhou.aliyuncs.com`） |
+| `OSS_REGION` | 区域（默认 `us-east-1`） |
+| `OSS_ACCESS_KEY_ID` | Access Key（不设使用 IAM 角色） |
+| `OSS_ACCESS_KEY_SECRET` | Secret Key |
+| `STOCKQUANT_DATA_DIR` | 本地目录（本地模式或 OSS 模式元数据临时路径） |
 
 #### 认证方式
 
-- **IAM 角色（推荐）**：不设 AK/SK，boto3 自动从云平台元数据服务获取
+- **IAM 角色**：不设 AK/SK，DuckDB 自动从云平台获取
 - **手动 AK/SK**：设置 `OSS_ACCESS_KEY_ID` + `OSS_ACCESS_KEY_SECRET`
 
-#### 生命周期
-
-```
-服务启动 → sync_down (拉取 *.db)
-         → Flask + APScheduler 运行（数据采集 + 量化分析）
-         → sync_up (推送 *.db 回 OSS) → 退出
-```
-
-代码实现：`app/services/oss_sync.py`，在 `run.py` 的 `cmd_start` 中自动调用。
-
-#### 示例（阿里云函数计算 + OSS）
+#### 示例
 
 ```bash
 export OSS_BUCKET=stockquant-data
 export OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 export OSS_ACCESS_KEY_ID=xxx
 export OSS_ACCESS_KEY_SECRET=xxx
-export STOCKQUANT_DATA_DIR=/tmp/stockquant
 stockquant-server start --host 0.0.0.0 --port 5000
 ```
 
@@ -300,14 +305,14 @@ POST /api/stock/decision {"stock": "阿里巴巴"}
 
 | 决策 | 理由 |
 |------|------|
-| DuckDB 单文件 DB，嵌套路径 | 嵌入式部署零配置，JSON → DuckDB 提升可靠性 |
+| DuckDB + Parquet on OSS (存算分离) | 数据以 Parquet 列存格式直存 OSS，DuckDB httpfs 列裁剪/谓词下推远程查询，零本地盘 |
 | akShare + yfinance 双数据源 | akShare 对 A 股数据支持更好（前复权），yfinance 覆盖港股美股 |
 | 交易时段过滤 | 避免非交易时段的无效 API 调用和数据噪声 |
 | 工作流标识含点号（`.`） | 符合 server.md 规范，SQL 中以双引号包裹 |
 | DIF 取整 `×100` | 单调保留比较顺序，避免小数值截断导致的假背离 |
 | 三级决策整合 | 算法文档的层次化设计：趋势定仓位 → 结构定方向 → 序列精调入口 |
 | 延迟加载 WorkflowService | 避免模块导入时 DB 未就绪的问题 |
-| OSS 状态同步（计算存储分离） | 通过 boto3 对接 S3 兼容存储，支持 stateless 部署，按需运行降本 |
+| Parquet 列存格式 | 列裁剪 + 谓词下推，分析场景查询效率远超行存，且 OSS 原生可读 |
 
 ## 6. 项目结构
 
@@ -344,30 +349,29 @@ StockQuantAssisant/
 │       ├── __init__.py
 │       ├── stock_service.py
 │       ├── workflow_service.py
-│       ├── analysis_service.py
-│       └── oss_sync.py         ← OSS 状态同步
+│       └── analysis_service.py
 ├── tests/
 │   ├── conftest.py
 │   ├── test_algorithm.py
 │   ├── test_api.py
 │   ├── test_database.py
 │   ├── test_integration.py
+│   ├── test_parquet_store.py   ← Parquet 存储单测
 │   ├── test_stock_service.py
-│   ├── test_workflow_service.py
-│   └── test_oss_sync.py        ← OSS 同步单测
+│   └── test_workflow_service.py
 └── e2e/
     ├── run.py
-    └── test_oss.py             ← OSS 端到端测试
+    └── test_parquet.py         ← Parquet on OSS E2E
 ```
 
 ## 7. 测试
 
-基于 pytest，共 148 个单元测试 + 18 个 OSS E2E 检查点，运行：
+基于 pytest，共 147 个单元测试 + 7 个 Parquet E2E 检查点：
 
 ```bash
-pytest tests/ -v          # 单元测试
-python3 e2e/test_oss.py   # OSS 端到端测试 (moto 模拟 S3)
-python3 e2e/test_oss.py --minio  # OSS 端到端测试 (真实 MinIO)
+pytest tests/ -v                        # 单元测试
+python3 e2e/test_parquet.py             # Parquet 本地 E2E
+python3 e2e/test_parquet.py --minio     # Parquet on OSS E2E (需 MinIO)
 ```
 
-测试覆盖：股票识别、数据库 CRUD、工作流管理、API 端点、三个量化算法、决策引擎、集成流程、OSS 状态同步（mock + moto 模拟 S3）。测试使用 `tempfile` 隔离数据库和文件系统。
+测试覆盖：股票识别、Parquet CRUD、工作流管理、API 端点、三个量化算法、决策引擎、集成流程、Parquet 列存 roundtrip。测试使用 `tempfile` 隔离文件系统。

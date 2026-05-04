@@ -29,9 +29,24 @@
 
 #### 3. 数据库与表结构
 
-- 不同市场的股票使用**不同的 DuckDB 数据库文件**（路径按市场区分）。
-- 每个工作流对应一张独立的表，表名与工作流唯一标识一致。
-- 表结构需包含至少：`timestamp`（时间戳）、`open`、`high`、`low`、`close`、`volume` 等标准 OHLCV 字段。
+- 数据以 **Parquet 列存格式** 存储在 OSS（S3 / 阿里云 OSS / MinIO）上。
+- 每个工作流对应一个 Parquet 文件，路径 `{market}/{table_name}.parquet`。
+- 元数据（stock_codes / workflows）以独立 Parquet 文件存储在 `metadata/` 目录下。
+- 运行时由 DuckDB 的 httpfs 扩展直接远程读写，**零本地磁盘持久化**。
+
+Parquet 文件结构：
+```
+s3://{bucket}/
+├── metadata/
+│   ├── stock_codes.parquet
+│   └── workflows.parquet
+├── a/
+│   └── {table}.parquet
+├── hk/
+│   └── {table}.parquet
+└── us/
+    └── {table}.parquet
+```
 
 ---
 
@@ -70,27 +85,26 @@
 - 服务重启时，自动加载所有已存在的工作流，恢复定时调度，无需重新注册。
 - 支持 **stateless 部署模式**：通过 OSS 对象存储（S3 / 阿里云 OSS / MinIO）在实例间同步 DuckDB 数据文件，实现计算与数据分离。
 
-#### 7. Stateless 部署 (OSS 状态同步)
+#### 7. Stateless 部署 (Parquet on OSS)
 
-项目支持将 DuckDB 数据文件外挂到云对象存储，实现按需运行的 stateless 部署：
+数据以 Parquet 格式直接存储在 OSS 上，DuckDB 通过 httpfs 扩展远程读写：
 
-- **启动自动拉取**：服务启动时从 OSS 下载所有 `*.db` 文件
-- **停止自动推送**：服务停止时将 `*.db` 文件上传回 OSS
-- **镜像不变**：无需每天重新构建 Docker 镜像
+- **零本地磁盘**：OHLCV 数据和元数据均以 Parquet 文件存储在 OSS，无需 sync_down/sync_up
+- **远程查询**：DuckDB `read_parquet('s3://...')` 带谓词下推和列裁剪，只传输需要的行/列
+- **直接写入**：`COPY ... TO 's3://...' (FORMAT PARQUET)` 直接写 OSS，不经过本地
 
 环境变量：
 
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `OSS_BUCKET` | 是 | Bucket 名称，不设则保持本地模式 |
-| `OSS_ENDPOINT` | 否 | S3 兼容 Endpoint（如 `https://oss-cn-hangzhou.aliyuncs.com`） |
-| `OSS_REGION` | 否 | 区域（默认 `us-east-1`） |
-| `OSS_ACCESS_KEY_ID` | 否 | Access Key（不设则使用 IAM 角色） |
-| `OSS_ACCESS_KEY_SECRET` | 否 | Secret Key |
-| `OSS_KEY_PREFIX` | 否 | Bucket 内目录前缀 |
-| `STOCKQUANT_DATA_DIR` | 否 | 本地数据目录（云函数内建议指向 `/tmp/`） |
+| 变量 | 说明 |
+|------|------|
+| `OSS_BUCKET` | Bucket 名称，不设则使用本地 Parquet |
+| `OSS_ENDPOINT` | S3 兼容 Endpoint（如 `https://oss-cn-hangzhou.aliyuncs.com`） |
+| `OSS_REGION` | 区域（默认 `us-east-1`） |
+| `OSS_ACCESS_KEY_ID` | Access Key（不设则使用 IAM 角色） |
+| `OSS_ACCESS_KEY_SECRET` | Secret Key |
+| `STOCKQUANT_DATA_DIR` | 本地临时目录（不配 OSS 时使用） |
 
-> **认证方式**：IAM 角色（推荐，不设 AK/SK）或手动 AK/SK 两种方式均支持。
+> **认证方式**：IAM 角色或手动 AK/SK 均支持。
 
 ---
 
@@ -98,7 +112,6 @@
 
 - 使用 **Python** 开发。
 - 暴露 **REST API**（使用 Flask 框架）。
-- 数据存储：**DuckDB**，不同市场使用不同数据库文件。
+- 数据存储：**Parquet on OSS**，DuckDB httpfs 扩展远程读写。
 - 任务调度：使用 `APScheduler` 实现周期性任务。
-- 状态同步：使用 `boto3` 对接 S3 兼容存储（S3 / 阿里云 OSS / MinIO），支持 stateless 部署。
 - 数据源：使用 akshare（A 股）+ yfinance（港股、美股）双数据源。

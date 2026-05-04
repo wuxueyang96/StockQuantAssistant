@@ -59,7 +59,7 @@ class WorkflowService:
                 'stock_code': stock_code,
                 'interval': interval,
                 'table': table_name,
-                'db_path': Config.DB_PATHS[market],
+                'db_path': '',
                 'created_at': datetime.now().isoformat(),
                 'active': True
             }

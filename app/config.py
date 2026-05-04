@@ -10,20 +10,14 @@ def _get_data_dir():
 
 class Config:
     DATA_DIR = _get_data_dir()
-    METADATA_DB_PATH = os.path.join(DATA_DIR, 'metadata.db')
 
     OSS_BUCKET = os.environ.get('OSS_BUCKET')
     OSS_ENDPOINT = os.environ.get('OSS_ENDPOINT')
     OSS_REGION = os.environ.get('OSS_REGION', 'us-east-1')
-    OSS_KEY_PREFIX = os.environ.get('OSS_KEY_PREFIX', '')
     OSS_ACCESS_KEY_ID = os.environ.get('OSS_ACCESS_KEY_ID')
     OSS_ACCESS_KEY_SECRET = os.environ.get('OSS_ACCESS_KEY_SECRET')
 
-    DB_PATHS = {
-        'a': os.path.join(DATA_DIR, 'a_stock.db'),
-        'hk': os.path.join(DATA_DIR, 'hk_stock.db'),
-        'us': os.path.join(DATA_DIR, 'us_stock.db'),
-    }
+    METADATA_DB_PATH = os.path.join(DATA_DIR, 'metadata.db')
 
     # yfinance 支持的 interval: 1m,2m,5m,15m,30m,60m,90m,1h,4h,1d,5d,1wk,1mo,3mo
     # 120m 不被支持，映射到 1h（60m）作为最接近可用粒度

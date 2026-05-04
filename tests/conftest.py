@@ -19,19 +19,17 @@ def temp_db_dir():
 def app(temp_db_dir):
     from app.config import Config
     Config.DATA_DIR = temp_db_dir
-    Config.METADATA_DB_PATH = os.path.join(temp_db_dir, 'metadata.db')
-    Config.DB_PATHS = {
-        'a': os.path.join(temp_db_dir, 'a_stock.db'),
-        'hk': os.path.join(temp_db_dir, 'hk_stock.db'),
-        'us': os.path.join(temp_db_dir, 'us_stock.db'),
-    }
+    Config.OSS_BUCKET = None
+
+    from app.models.database import db_manager
+    db_manager.close_all()
+    db_manager.__init__()
 
     from app import create_app
     application = create_app()
     application.config['TESTING'] = True
     yield application
 
-    from app.models.database import db_manager
     db_manager.close_all()
 
 
@@ -52,10 +50,10 @@ def seed_stock_codes(app):
 @pytest.fixture
 def clean_db(app, temp_db_dir):
     from app.models.database import db_manager
-    db_manager._connections.clear()
+    db_manager.__init__()
     yield db_manager
     db_manager.close_all()
-    db_manager._connections.clear()
+    db_manager.__init__()
 
 
 @pytest.fixture

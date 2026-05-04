@@ -32,7 +32,6 @@ dependencies = [
     "apscheduler>=3.10.4",
     "pytz>=2024.2",
     "akshare>=1.18.0",
-    "boto3>=1.28.0",
 ]
 
 [project.optional-dependencies]
