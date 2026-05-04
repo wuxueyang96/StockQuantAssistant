@@ -4,8 +4,10 @@ import os
 import signal
 import sys
 from app import create_app
+from app.config import Config
 from app.scheduler.job_scheduler import job_scheduler
 from app.models.database import db_manager
+from app.services.oss_sync import sync_down, sync_up
 
 
 PID_FILE = os.path.join(os.path.expanduser('~'), '.stockquant', 'server.pid')
@@ -67,6 +69,7 @@ def shutdown_scheduler(exception=None):
 
 def cmd_start(args):
     write_pid()
+    sync_down(Config.DATA_DIR)
     try:
         logger.info(f"启动股票量化助手服务... {args.host}:{args.port} debug={args.debug}")
         job_scheduler.start()
@@ -76,6 +79,7 @@ def cmd_start(args):
     finally:
         job_scheduler.shutdown()
         db_manager.close_all()
+        sync_up(Config.DATA_DIR)
         remove_pid()
         logger.info("服务已关闭")
 

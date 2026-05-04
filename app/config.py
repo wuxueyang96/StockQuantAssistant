@@ -12,6 +12,13 @@ class Config:
     DATA_DIR = _get_data_dir()
     METADATA_DB_PATH = os.path.join(DATA_DIR, 'metadata.db')
 
+    OSS_BUCKET = os.environ.get('OSS_BUCKET')
+    OSS_ENDPOINT = os.environ.get('OSS_ENDPOINT')
+    OSS_REGION = os.environ.get('OSS_REGION', 'us-east-1')
+    OSS_KEY_PREFIX = os.environ.get('OSS_KEY_PREFIX', '')
+    OSS_ACCESS_KEY_ID = os.environ.get('OSS_ACCESS_KEY_ID')
+    OSS_ACCESS_KEY_SECRET = os.environ.get('OSS_ACCESS_KEY_SECRET')
+
     DB_PATHS = {
         'a': os.path.join(DATA_DIR, 'a_stock.db'),
         'hk': os.path.join(DATA_DIR, 'hk_stock.db'),
