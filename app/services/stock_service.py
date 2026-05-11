@@ -27,7 +27,7 @@ def _is_akshare_available():
 
 def format_stock_code(market: str, stock_code: str) -> str:
     if market == 'a':
-        suffix = '.SS' if stock_code.startswith('6') else '.SZ'
+        suffix = '.SS' if stock_code.startswith(('5', '6')) else '.SZ'
     elif market == 'hk':
         suffix = '.HK'
     elif market == 'us':
@@ -47,7 +47,7 @@ def _detect_by_code(stock_input: str) -> List[Tuple[str, str]]:
 
     if stock_input.endswith('.SZ') or stock_input.endswith('.SS'):
         code = stock_input.rsplit('.', 1)[0]
-        if re.match(r'^\d{6}$', code) and code[0] in ('6', '0', '3'):
+        if re.match(r'^\d{6}$', code) and code[0] in ('6', '0', '3', '5'):
             return [('a', code)]
         raise ValueError(f"无法识别A股代码: {stock_input}")
 
@@ -65,7 +65,7 @@ def _detect_by_code(stock_input: str) -> List[Tuple[str, str]]:
 
     if re.match(r'^\d{5,6}$', stock_input):
         if len(stock_input) == 6:
-            if stock_input[0] in ('6', '0', '3'):
+            if stock_input[0] in ('6', '0', '3', '5'):
                 return [('a', stock_input)]
         if len(stock_input) == 5:
             return [('hk', stock_input.zfill(5))]
