@@ -14,7 +14,6 @@ import matplotlib
 
 matplotlib.use('Agg')   # 服务端无 X11，先切到非交互后端
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
 from matplotlib.lines import Line2D
 import mplfinance as mpf
 import pandas as pd
@@ -23,26 +22,6 @@ from app.algos.structure import MACDStructure
 from app.algos.trend import TrendChannel
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_chinese_font() -> Optional[str]:
-    candidates = [
-        'WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 'Noto Sans CJK SC',
-        'Source Han Sans CN', 'PingFang SC', 'Microsoft YaHei',
-        'SimHei', 'Heiti TC', 'AR PL UMing CN',
-    ]
-    from matplotlib import font_manager
-    available = {f.name for f in font_manager.fontManager.ttflist}
-    for name in candidates:
-        if name in available:
-            return name
-    return None
-
-
-_CN_FONT = _resolve_chinese_font()
-if _CN_FONT:
-    matplotlib.rcParams['font.sans-serif'] = [_CN_FONT, 'DejaVu Sans']
-    matplotlib.rcParams['axes.unicode_minus'] = False
 
 
 def render_chart_png(
@@ -74,10 +53,7 @@ def render_chart_png(
         mpf.make_addplot(ch_tail['long_lower'],  color='#16a085', width=0.8, linestyle='--'),
     ]
 
-    style = mpf.make_mpf_style(
-        base_mpf_style='charles',
-        rc={'font.family': matplotlib.rcParams['font.sans-serif']} if _CN_FONT else {},
-    )
+    style = mpf.make_mpf_style(base_mpf_style='charles')
 
     buf = io.BytesIO()
     fig, axlist = mpf.plot(
@@ -94,27 +70,20 @@ def render_chart_png(
     # mplfinance 不把 addplot 自动进图例，用代理线说明四轨（与 TrendChannel 默认 26/90 一致）
     ax_main = axlist[0] if isinstance(axlist, (list, tuple)) else axlist
     legend_handles = [
-        Line2D([0], [0], color='#e74c3c', linewidth=2, linestyle='-', label='短期上轨（26 日窗口）'),
-        Line2D([0], [0], color='#27ae60', linewidth=2, linestyle='-', label='短期下轨（26 日窗口）'),
-        Line2D([0], [0], color='#c0392b', linewidth=2, linestyle='--', label='长期上轨（90 日窗口）'),
-        Line2D([0], [0], color='#16a085', linewidth=2, linestyle='--', label='长期下轨（90 日窗口）'),
+        Line2D([0], [0], color='#e74c3c', linewidth=2, linestyle='-', label='Short Upper (26d)'),
+        Line2D([0], [0], color='#27ae60', linewidth=2, linestyle='-', label='Short Lower (26d)'),
+        Line2D([0], [0], color='#c0392b', linewidth=2, linestyle='--', label='Long Upper (90d)'),
+        Line2D([0], [0], color='#16a085', linewidth=2, linestyle='--', label='Long Lower (90d)'),
     ]
     legend_kw: dict = {
         'handles': legend_handles,
         'loc': 'upper left',
         'framealpha': 0.92,
-        'title': '趋势通道',
+        'title': 'Trend Channel',
+        'fontsize': 8,
     }
-    if _CN_FONT:
-        legend_kw['prop'] = font_manager.FontProperties(family=_CN_FONT, size=8)
-        legend_kw['title_fontproperties'] = font_manager.FontProperties(
-            family=_CN_FONT, size=9,
-        )
-    else:
-        legend_kw['fontsize'] = 8
     leg = ax_main.legend(**legend_kw)
-    if leg.get_title() is not None and not _CN_FONT:
-        leg.get_title().set_fontsize(9)
+    leg.get_title().set_fontsize(9)
 
     fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
     plt.close(fig)
@@ -145,10 +114,7 @@ def render_intraday_macd_png(
         mpf.make_addplot(macd_tail['dea'], panel=1, color='#e67e22', width=1.0),
     ]
 
-    style = mpf.make_mpf_style(
-        base_mpf_style='charles',
-        rc={'font.family': matplotlib.rcParams['font.sans-serif']} if _CN_FONT else {},
-    )
+    style = mpf.make_mpf_style(base_mpf_style='charles')
 
     buf = io.BytesIO()
     fig, _ = mpf.plot(

@@ -42,6 +42,10 @@ def get_workflow_id(market: str, stock_code: str, interval: str) -> str:
     return f"{MARKET_LABEL[market]}_{code}_{interval}"
 
 
+def _is_etf(stock_code: str) -> bool:
+    return stock_code.startswith('5')
+
+
 def _detect_by_code(stock_input: str) -> List[Tuple[str, str]]:
     stock_input = stock_input.strip().upper()
 
@@ -117,6 +121,20 @@ def _fetch_5m_akshare_a(stock_code: str) -> pd.DataFrame:
     end_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     start_date = (datetime.now() - pd.DateOffset(days=60)).strftime('%Y-%m-%d %H:%M:%S')
     df = ak.stock_zh_a_hist_min_em(
+        symbol=stock_code,
+        period='5',
+        start_date=start_date,
+        end_date=end_date,
+        adjust='qfq',
+    )
+    return _normalize_akshare_min(df, tz='Asia/Shanghai')
+
+
+def _fetch_5m_akshare_etf(stock_code: str) -> pd.DataFrame:
+    import akshare as ak
+    end_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    start_date = (datetime.now() - pd.DateOffset(days=60)).strftime('%Y-%m-%d %H:%M:%S')
+    df = ak.fund_etf_hist_min_em(
         symbol=stock_code,
         period='5',
         start_date=start_date,
@@ -208,6 +226,8 @@ def fetch_stock_data(market: str, stock_code: str, interval: str = '5min'):
 
     if market == 'a' and _is_akshare_available():
         try:
+            if _is_etf(stock_code):
+                return _fetch_5m_akshare_etf(stock_code)
             return _fetch_5m_akshare_a(stock_code)
         except Exception as e:
             logger.warning(f"akshare A 股 5m 失败 ({stock_code}): {e}，回退 yfinance")

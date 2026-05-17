@@ -32,7 +32,7 @@ class WorkflowService:
     def _fill_empty_tables(self, market: str, stock_code: str):
         for interval in self._COLLECT_INTERVALS:
             table_name = get_table_name(market, stock_code, interval)
-            if db_manager.table_exists(market, table_name) and db_manager.get_latest_timestamp(market, table_name) is None:
+            if not db_manager.table_exists(market, table_name) or db_manager.get_latest_timestamp(market, table_name) is None:
                 logger.info(f"表 {table_name} 为空，立即拉取初始数据...")
                 try:
                     rows = collect_and_store(market, stock_code, interval, skip_trading_check=True)
