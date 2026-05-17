@@ -19,21 +19,25 @@ class Config:
 
     METADATA_DB_PATH = os.path.join(DATA_DIR, 'metadata.db')
 
-    # yfinance 支持的 interval: 1m,2m,5m,15m,30m,60m,90m,1h,4h,1d,5d,1wk,1mo,3mo
-    # 120m 不被支持，映射到 1h（60m）作为最接近可用粒度
+    # 采集层只拉取最细粒度的 5min K 线，daily / 60min / 90min / 120min 由 app.services.resample
+    # 在运行时合成。这样能同时绕开三件事：
+    # 1) Yahoo 不支持 120m（任何市场都报 Invalid input）；
+    # 2) yfinance 对 A 股小时线按美股 RTH 切片导致 12:30 出现伪 K 线；
+    # 3) Yahoo 港股小时线返回空。
+    COLLECT_INTERVAL = '5min'
     INTERVAL_MAP = {
-        'daily': {'period': '1y', 'interval': '1d'},
-        '120min': {'period': '60d', 'interval': '1h'},
-        '90min': {'period': '60d', 'interval': '90m'},
-        '60min': {'period': '60d', 'interval': '60m'},
+        '5min': {'period': '60d', 'interval': '5m'},
     }
-
     INTERVAL_MINUTES = {
-        'daily': 24 * 60,
-        '120min': 120,
-        '90min': 90,
+        '5min': 5,
         '60min': 60,
+        '90min': 90,
+        '120min': 120,
+        'daily': 24 * 60,
     }
+    # 决策 API 固定为「日线趋势 + 60/90/120 结构 + 日线序列」，见 DecisionEngine.summary_integrated
+    # 下列元组仅表示 resample 可能产出的目标周期（供调度/文档引用），**不是** HTTP 决策维度枚举。
+    RESAMPLE_INTERVALS = ('5min', '60min', '90min', '120min', 'daily')
 
     YFINANCE_TICKER_MAP = {
         'a': lambda code: f"{code}.SS" if code.startswith('6') else f"{code}.SZ",

@@ -42,30 +42,33 @@ class TestCollectAndStore:
         from app.services.stock_service import collect_and_store
         from app.models.database import db_manager
 
-        rows = collect_and_store('a', '000001', 'daily')
+        # 采集层只写 5min 表（daily 等高粒度由 resample 运行时合成）
+        rows = collect_and_store('a', '000001', '5min')
         assert rows > 0
-        assert db_manager.table_exists('a', 'A_000001.SZ_daily')
+        assert db_manager.table_exists('a', 'A_000001.SZ_5min')
 
     def test_collect_skip_non_trading(self, setup_collect):
         from app.services.stock_service import collect_and_store
         with patch('app.services.stock_service.is_trading_time', return_value=False):
-            assert collect_and_store('a', '000001', 'daily') == 0
+            assert collect_and_store('a', '000001', '5min') == 0
 
     def test_collect_dedup(self, setup_collect):
         from app.services.stock_service import collect_and_store
         from app.models.database import db_manager
-        rows1 = collect_and_store('a', '000001', 'daily')
-        collect_and_store('a', '000001', 'daily')
-        data = db_manager.get_data('a', 'A_000001.SZ_daily')
+        rows1 = collect_and_store('a', '000001', '5min')
+        collect_and_store('a', '000001', '5min')
+        data = db_manager.get_data('a', 'A_000001.SZ_5min')
         assert len(data) == rows1
 
-    def test_collect_multi_interval(self, setup_collect):
+    def test_collect_redirects_legacy_interval_to_5min(self, setup_collect):
+        """旧调用方传 'daily' 也只写 5min 表，不再产生 *_daily 表。"""
         from app.services.stock_service import collect_and_store
         from app.models.database import db_manager
         for interval in ['daily', '60min']:
             collect_and_store('a', '000001', interval)
-        assert db_manager.table_exists('a', 'A_000001.SZ_daily')
-        assert db_manager.table_exists('a', 'A_000001.SZ_60min')
+        assert db_manager.table_exists('a', 'A_000001.SZ_5min')
+        assert not db_manager.table_exists('a', 'A_000001.SZ_daily')
+        assert not db_manager.table_exists('a', 'A_000001.SZ_60min')
 
 
 class TestDatabaseMetadata:
@@ -148,7 +151,9 @@ class TestIntegration:
         workflow_service.workflows = {}
         result = workflow_service.register_stock('000001')
         assert result['success'] is True
-        assert len(result['workflows']) == 4
+        # 单市场仅创建 1 个 5min 工作流
+        assert len(result['workflows']) == 1
+        assert result['workflows'][0].endswith('_5min')
 
     def test_code_register_then_stock_register(self, full_setup):
         from app.models.database import db_manager
@@ -158,4 +163,6 @@ class TestIntegration:
         workflow_service.workflows = {}
         result = workflow_service.register_stock('阿里巴巴')
         assert result['success'] is True
-        assert len(result['workflows']) == 8
+        # 双市场 → 2 个 5min 工作流（HK + US）
+        assert len(result['workflows']) == 2
+        assert all(w.endswith('_5min') for w in result['workflows'])

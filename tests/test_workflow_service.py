@@ -25,9 +25,10 @@ class TestWorkflowService:
         return ws
 
     def test_workflow_id_format(self, workflow_service):
-        assert workflow_service.get_workflow_id('a', '000001', 'daily') == 'A_000001.SZ_daily'
-        assert workflow_service.get_workflow_id('hk', '00700', '120min') == 'HK_00700.HK_120min'
-        assert workflow_service.get_workflow_id('us', 'AAPL', '90min') == 'US_AAPL.US_90min'
+        # 采集层只保留 5min；高粒度由 resample 运行时合成。
+        assert workflow_service.get_workflow_id('a', '000001', '5min') == 'A_000001.SZ_5min'
+        assert workflow_service.get_workflow_id('hk', '00700', '5min') == 'HK_00700.HK_5min'
+        assert workflow_service.get_workflow_id('us', 'AAPL', '5min') == 'US_AAPL.US_5min'
 
     def test_register_single_market(self, workflow_service, mock_deps):
         mock_detect, mock_collect, mock_db = mock_deps
@@ -35,12 +36,13 @@ class TestWorkflowService:
 
         result = workflow_service.register_stock('000001')
         assert result['success'] is True
-        assert len(result['workflows']) == 4
-        assert mock_db.save_workflow.call_count == 4
-        for wf_id in result['workflows']:
-            parts = wf_id.split('_')
-            assert parts[0] == 'A'
-            assert parts[2] in ('daily', '120min', '90min', '60min')
+        # 每个市场只创建 1 个 5min 工作流
+        assert len(result['workflows']) == 1
+        assert mock_db.save_workflow.call_count == 1
+        wf_id = result['workflows'][0]
+        parts = wf_id.split('_')
+        assert parts[0] == 'A'
+        assert parts[-1] == '5min'
 
     def test_register_multi_market(self, workflow_service, mock_deps):
         mock_detect, mock_collect, mock_db = mock_deps
@@ -48,14 +50,16 @@ class TestWorkflowService:
 
         result = workflow_service.register_stock('阿里巴巴')
         assert result['success'] is True
-        assert len(result['workflows']) == 8
+        # 双市场 → 2 个 5min 工作流
+        assert len(result['workflows']) == 2
         assert len(result['markets']) == 2
-        assert mock_db.save_workflow.call_count == 8
+        assert mock_db.save_workflow.call_count == 2
 
         hk_workflows = [w for w in result['workflows'] if w.startswith('HK_')]
         us_workflows = [w for w in result['workflows'] if w.startswith('US_')]
-        assert len(hk_workflows) == 4
-        assert len(us_workflows) == 4
+        assert len(hk_workflows) == 1
+        assert len(us_workflows) == 1
+        assert all(w.endswith('_5min') for w in result['workflows'])
 
     def test_register_duplicate(self, workflow_service, mock_deps):
         mock_detect, mock_collect, mock_db = mock_deps
@@ -70,14 +74,15 @@ class TestWorkflowService:
         mock_detect.return_value = [('a', '000001')]
         workflow_service.register_stock('000001')
         workflows = workflow_service.get_stock_workflows('000001')
-        assert len(workflows) == 4
+        assert len(workflows) == 1
+        assert workflows[0]['interval'] == '5min'
 
     def test_delete_workflow(self, workflow_service, mock_deps):
         mock_detect, mock_collect, mock_db = mock_deps
         mock_detect.return_value = [('a', '000001')]
         workflow_service.register_stock('000001')
-        assert workflow_service.delete_workflow('A_000001.SZ_daily') is True
-        assert workflow_service.delete_workflow('A_000001.SZ_daily') is False
+        assert workflow_service.delete_workflow('A_000001.SZ_5min') is True
+        assert workflow_service.delete_workflow('A_000001.SZ_5min') is False
 
     def test_table_name_matches_workflow_id(self, workflow_service, mock_deps):
         mock_detect, mock_collect, mock_db = mock_deps
@@ -92,7 +97,7 @@ class TestWorkflowService:
         mock_detect.return_value = [('hk', '09988'), ('us', 'BABA')]
 
         r1 = workflow_service.register_stock('阿里巴巴')
-        assert len(r1['workflows']) == 8
+        assert len(r1['workflows']) == 2
 
         r2 = workflow_service.register_stock('阿里巴巴')
         assert '工作流已存在' in r2['message']

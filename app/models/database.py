@@ -102,34 +102,55 @@ class DatabaseManager:
         except Exception:
             pass
 
+        # 始终使用显式 schema 创建表，再从 parquet（如有）回填。
+        # 避免 pandas 的 None 列被 DuckDB 推断为 Int32，导致后续 INSERT 字符串失败。
         for table_name in ('stock_codes', 'workflows'):
             url = self._meta_url(table_name)
-            df = self._try_read_parquet(url)
-            if df.empty:
-                if table_name == 'stock_codes':
-                    conn.execute("""
-                        CREATE TABLE stock_codes (
-                            name TEXT PRIMARY KEY,
-                            a_code TEXT,
-                            hk_code TEXT,
-                            us_code TEXT
-                        )
-                    """)
-                else:
-                    conn.execute("""
-                        CREATE TABLE workflows (
-                            id TEXT PRIMARY KEY,
-                            market TEXT,
-                            stock_code TEXT,
-                            interval TEXT,
-                            "table" TEXT,
-                            db_path TEXT,
-                            created_at TEXT,
-                            active INTEGER
-                        )
-                    """)
+            if table_name == 'stock_codes':
+                conn.execute("""
+                    CREATE TABLE stock_codes (
+                        name TEXT PRIMARY KEY,
+                        a_code TEXT,
+                        hk_code TEXT,
+                        us_code TEXT
+                    )
+                """)
+                df = self._try_read_parquet(url)
+                if not df.empty:
+                    conn.register('__seed_df', df)
+                    conn.execute(
+                        "INSERT INTO stock_codes (name, a_code, hk_code, us_code) "
+                        "SELECT CAST(name AS TEXT), CAST(a_code AS TEXT), "
+                        "       CAST(hk_code AS TEXT), CAST(us_code AS TEXT) "
+                        "FROM __seed_df"
+                    )
+                    conn.unregister('__seed_df')
             else:
-                conn.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+                conn.execute("""
+                    CREATE TABLE workflows (
+                        id TEXT PRIMARY KEY,
+                        market TEXT,
+                        stock_code TEXT,
+                        interval TEXT,
+                        "table" TEXT,
+                        db_path TEXT,
+                        created_at TEXT,
+                        active INTEGER
+                    )
+                """)
+                df = self._try_read_parquet(url)
+                if not df.empty:
+                    conn.register('__seed_df', df)
+                    conn.execute(
+                        "INSERT INTO workflows (id, market, stock_code, interval, \"table\", "
+                        "                       db_path, created_at, active) "
+                        "SELECT CAST(id AS TEXT), CAST(market AS TEXT), CAST(stock_code AS TEXT), "
+                        "       CAST(interval AS TEXT), CAST(\"table\" AS TEXT), "
+                        "       CAST(db_path AS TEXT), CAST(created_at AS TEXT), "
+                        "       CAST(active AS INTEGER) "
+                        "FROM __seed_df"
+                    )
+                    conn.unregister('__seed_df')
 
     def _flush_metadata(self):
         if not self._metadata_loaded or self._conn is None:

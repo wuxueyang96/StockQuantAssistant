@@ -34,14 +34,19 @@ StockQuantAssisant/
 │   └── services/
 │       ├── stock_service.py       # 股票识别、数据拉取（akshare / yfinance）
 │       ├── workflow_service.py    # 工作流注册与管理
-│       └── analysis_service.py    # 量化分析服务
-├── tests/                         # 单元测试（147 个）
+│       ├── analysis_service.py    # 量化分析服务
+│       ├── chart_service.py       # K 线图表渲染（mplfinance）
+│       └── resample.py            # 多周期 OHCV 重采样（5min → 60/90/120/daily）
+├── tests/                         # 单元测试（212 个）
 │   ├── conftest.py
 │   ├── test_algorithm.py
+│   ├── test_analysis_service.py
 │   ├── test_api.py
+│   ├── test_chart.py
 │   ├── test_database.py
 │   ├── test_integration.py
 │   ├── test_parquet_store.py
+│   ├── test_resample.py
 │   ├── test_stock_service.py
 │   └── test_workflow_service.py
 └── e2e/
@@ -98,7 +103,7 @@ python run.py start --host 0.0.0.0 --port 5000
 ### 运行测试
 
 ```bash
-pytest tests/ -v                    # 单元测试（147 个）
+pytest tests/ -v                    # 单元测试（212 个）
 python3 e2e/test_parquet.py         # Parquet 本地 E2E
 python3 e2e/test_parquet.py --minio # Parquet on OSS E2E（需 MinIO）
 ```
@@ -109,16 +114,16 @@ python3 e2e/test_parquet.py --minio # Parquet on OSS E2E（需 MinIO）
 
 - 支持 A 股 / 港股 / 美股三市场，代码或名称输入
 - 名称自动匹配多市场（如"阿里巴巴"→ 港股 09988.HK + 美股 BABA.US）
-- 每个市场注册 4 个周期工作流（daily / 120min / 90min / 60min）
+- 每个股票注册一个 5 分钟工作流定期增量采集，高周期通过运行时重采样生成
 - 初次注册拉取约 200 周期历史数据，之后定时增量更新
 - 工作流持久化，服务重启自动恢复
 
 ### 量化决策引擎
 
-- **趋势量化**：双 EMA 通道（短周期 25 / 长周期 90）判断趋势方向，输出 10/6/4/0 目标仓位
-- **结构量化**：MACD 背离检测（钝化 → 75% DIF 转向 → 100% DIF/DEA 交叉），量化趋势衰竭转折点
-- **序列量化**：九转序列（高九卖出 / 低九买入），左侧择时信号
-- **决策整合**：三级优先级 — 趋势定仓 → 结构择时 → 序列共振
+- **趋势量化**：双 EMA 通道（短周期 26 / 长周期 90，3% 偏移）判断趋势方向，输出 10/6/4/0 目标仓位
+- **结构量化**：MACD 背离检测状态机（顶背离 / 底背离：钝化 → 75% DIF 转向 → 100% DIF/DEA 交叉），量化趋势衰竭转折点
+- **序列量化**：九转序列（高九卖出 / 低九买入），左侧择时信号，5 周期有效窗口
+- **决策整合**：三级优先级 — 趋势定仓 → 结构择时 → 序列共振，支持多周期联合研判
 
 ## REST API
 
@@ -132,24 +137,25 @@ python3 e2e/test_parquet.py --minio # Parquet on OSS E2E（需 MinIO）
 | `GET` | `/api/stock/codes` | 查看所有已录入映射 |
 | `POST` | `/api/stock/register` | 注册股票数据工作流 |
 | `POST` | `/api/stock/decision` | 查询量化决策结果 |
-| `GET` | `/api/workflows` | 查看所有工作流 |
+| `GET` | `/api/stock/chart` | 渲染 K 线图表（集成/单周期模式） |
 | `GET` | `/api/stock/<code>/workflows` | 查看指定股票工作流 |
+| `GET` | `/api/workflows` | 查看所有工作流 |
 | `DELETE` | `/api/workflows/<id>` | 删除工作流 |
 | `GET` | `/api/health` | 健康检查 |
 
 ## 工作流机制
 
-- **唯一标识**：`{市场}_{股票代码}_{周期}`（如 `A_000001.SZ_daily`）
+- **唯一标识**：`{市场}_{股票代码}_5min`（如 `A_000001.SZ_5min`）
 - **市场代码**：`A`（A 股）、`HK`（港股）、`US`（美股）
-- **周期**：`daily`、`120min`、`90min`、`60min`
+- **采集周期**：`5min`（唯一采集粒度，高周期在运行时通过重采样生成：60min / 90min / 120min / daily）
 
-注册新股票时，工作流会拉取约 200 个完整周期的历史数据写入 Parquet，之后按各自周期定时增量更新，仅在交易时段执行。
+注册新股票时，工作流会拉取约 200 个完整周期的 5 分钟历史数据写入 Parquet，之后每个 5 分钟定时增量更新，仅在交易时段执行。高周期（60min / 90min / 120min / daily）数据在量化分析时通过重采样动态生成。
 
 ## 数据存储
 
 - **格式**：Parquet 列存（列裁剪 + 谓词下推，远程查询只传输需要的行/列）
 - **元数据**：`metadata/stock_codes.parquet` + `metadata/workflows.parquet`
-- **OHLCV**：`{market}/{table_name}.parquet`，每工作流一个文件
+- **OHLCV**：`{market}/{table_name}.parquet`，每股票一个文件（5min 粒度）
 - **读取**：DuckDB `read_parquet('s3://...')` 远程直读
 - **写入**：DuckDB `COPY ... TO 's3://...' (FORMAT PARQUET)` 远程直写
 
@@ -169,6 +175,7 @@ python3 e2e/test_parquet.py --minio # Parquet on OSS E2E（需 MinIO）
 | 存储格式 | Parquet |
 | 对象存储 | S3 / 阿里云 OSS (兼容 S3 API) |
 | 数据处理 | Pandas / NumPy |
+| 图表渲染 | matplotlib / mplfinance |
 | 任务调度 | APScheduler |
 | A 股数据 | akshare |
 | 港股/美股数据 | yfinance |

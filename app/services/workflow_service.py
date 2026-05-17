@@ -18,16 +18,19 @@ class WorkflowService:
     def get_workflow_id(self, market: str, stock_code: str, interval: str) -> str:
         return get_workflow_id(market, stock_code, interval)
 
+    # 采集层只保留一个粒度：5min。daily/60min/90min/120min 由 resample 运行时合成。
+    _COLLECT_INTERVALS = ('5min',)
+
     def check_existing_workflows_for_code(self, market: str, stock_code: str) -> Optional[list[str]]:
         existing = []
-        for interval in ['daily', '120min', '90min', '60min']:
+        for interval in self._COLLECT_INTERVALS:
             wf_id = self.get_workflow_id(market, stock_code, interval)
             if wf_id in self.workflows:
                 existing.append(wf_id)
         return existing if existing else None
 
     def _fill_empty_tables(self, market: str, stock_code: str):
-        for interval in ['daily', '120min', '90min', '60min']:
+        for interval in self._COLLECT_INTERVALS:
             table_name = get_table_name(market, stock_code, interval)
             if db_manager.table_exists(market, table_name) and db_manager.get_latest_timestamp(market, table_name) is None:
                 logger.info(f"表 {table_name} 为空，立即拉取初始数据...")
@@ -40,7 +43,7 @@ class WorkflowService:
 
     def _register_one_market(self, market: str, stock_code: str) -> list[str]:
         created = []
-        for interval in ['daily', '120min', '90min', '60min']:
+        for interval in self._COLLECT_INTERVALS:
             wf_id = self.get_workflow_id(market, stock_code, interval)
             table_name = get_table_name(market, stock_code, interval)
 

@@ -9,12 +9,26 @@ class TrendChannel:
         self.offset_pct = offset_pct
 
     def compute_all(self, df: pd.DataFrame) -> pd.DataFrame:
+        """计算双通道。algorithm.md §一 规定：
+            上轨 = EMA( RollingMax(High, N), N ) × (1 + offset)
+            下轨 = EMA( RollingMin(Low,  N), N ) × (1 − offset)
+        先滚动取极值再做 EMA，得到"近期高低点中枢"，这才是通道支撑/阻力语义；
+        若直接对 High/Low 求 EMA 会退化成普通均线，应避免。
+        """
         result = df.copy()
 
-        result['short_upper'] = df['High'].ewm(span=self.short_period, adjust=False).mean() * (1 + self.offset_pct)
-        result['short_lower'] = df['Low'].ewm(span=self.short_period, adjust=False).mean() * (1 - self.offset_pct)
-        result['long_upper'] = df['High'].ewm(span=self.long_period, adjust=False).mean() * (1 + self.offset_pct)
-        result['long_lower'] = df['Low'].ewm(span=self.long_period, adjust=False).mean() * (1 - self.offset_pct)
+        ns = self.short_period
+        nl = self.long_period
+
+        short_rmax = df['High'].rolling(ns, min_periods=1).max()
+        short_rmin = df['Low'].rolling(ns, min_periods=1).min()
+        long_rmax = df['High'].rolling(nl, min_periods=1).max()
+        long_rmin = df['Low'].rolling(nl, min_periods=1).min()
+
+        result['short_upper'] = short_rmax.ewm(span=ns, adjust=False).mean() * (1 + self.offset_pct)
+        result['short_lower'] = short_rmin.ewm(span=ns, adjust=False).mean() * (1 - self.offset_pct)
+        result['long_upper'] = long_rmax.ewm(span=nl, adjust=False).mean() * (1 + self.offset_pct)
+        result['long_lower'] = long_rmin.ewm(span=nl, adjust=False).mean() * (1 - self.offset_pct)
 
         return result
 

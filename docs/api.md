@@ -1,8 +1,6 @@
 # API 文档
 
-Base URL: `/api`
-
-所有响应均为 JSON 格式，包含 `success` 字段。
+Base URL: `/api`，所有响应为 JSON，包含 `success` 字段。
 
 ## 目录
 
@@ -10,6 +8,7 @@ Base URL: `/api`
 - [股票代码映射](#股票代码映射)
 - [工作流注册](#工作流注册)
 - [量化决策](#量化决策)
+- [行情图表](#行情图表)
 - [工作流查询](#工作流查询)
 
 ---
@@ -18,14 +17,9 @@ Base URL: `/api`
 
 ### GET /health
 
-检查服务及调度器运行状态。
-
 **响应** `200`
 ```json
-{
-  "status": "ok",
-  "scheduler_running": true
-}
+{ "status": "ok", "scheduler_running": true }
 ```
 
 ---
@@ -34,26 +28,16 @@ Base URL: `/api`
 
 ### POST /stock/code
 
-录入或更新股票名称与各市场代码的映射关系。已存在的名称会更新对应市场代码，不影响未提供字段的原值。
-
-**请求**
-```json
-{
-  "name": "阿里巴巴",
-  "a": "000001",
-  "hk": "09988",
-  "us": "BABA"
-}
-```
+录入或更新股票名称与各市场代码的映射。已存在的名称只更新提供的字段。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `name` | string | 是 | 股票中文名称 |
 | `a` | string | 否 | A 股代码（6 位纯数字） |
 | `hk` | string | 否 | 港股代码（4-5 位纯数字） |
-| `us` | string | 否 | 美股代码（字母和数字） |
+| `us` | string | 否 | 美股代码 |
 
-> 至少提供 `a`、`hk`、`us` 中的一个。
+至少提供 `a`、`hk`、`us` 中的一个。
 
 **响应** `200`
 ```json
@@ -64,13 +48,8 @@ Base URL: `/api`
 ```json
 { "success": false, "message": "缺少 name 参数" }
 ```
-```json
-{ "success": false, "message": "至少需要提供 a、hk、us 中的一个市场代码" }
-```
 
 ### GET /stock/codes
-
-获取所有已录入的股票代码映射。
 
 **响应** `200`
 ```json
@@ -93,83 +72,28 @@ Base URL: `/api`
 
 根据股票代码或名称注册数据同步工作流。系统自动识别输入类型：
 
-- **代码格式**：直接按格式匹配市场（如 `000001.SZ` → A 股，`00700.HK` → 港股，`AAPL` → 美股）
-- **名称格式**：在 `stock_codes` 表中查找对应的市场代码，一个名称匹配多个市场时一次性注册所有市场
+- **代码**：按格式匹配市场（如 `000001.SZ` → A 股，`00700.HK` → 港股，`AAPL` → 美股）
+- **名称**：从 `stock_codes` 表反查，匹配多个市场时一次性注册所有市场
 
-每个市场注册 4 个工作流（`daily` / `120min` / `90min` / `60min`），初次注册时拉取约 200 个周期的历史数据并按各自间隔定时增量更新。
-
-**请求**
-```json
-{ "stock": "000001" }
-```
-```json
-{ "stock": "阿里巴巴" }
-```
+每个市场注册 **1 个 5min 工作流**。高粒度 K 线由 `resample` 运行时合成。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `stock` | string | 是 | 股票代码或名称 |
 
-**响应** `200` — 新创建
+**响应** `200` — 新创建（单市场）
 ```json
 {
   "success": true,
   "message": "工作流已创建",
-  "workflows": [
-    "A_000001.SZ_daily",
-    "A_000001.SZ_120min",
-    "A_000001.SZ_90min",
-    "A_000001.SZ_60min"
-  ],
-  "markets": [
-    { "market": "a", "stock_code": "000001" }
-  ]
-}
-```
-
-**响应** `200` — 多市场（如输入 "阿里巴巴"，同时命中港股和美股）
-```json
-{
-  "success": true,
-  "message": "工作流已创建",
-  "workflows": [
-    "HK_09988.HK_daily",
-    "HK_09988.HK_120min",
-    "HK_09988.HK_90min",
-    "HK_09988.HK_60min",
-    "US_BABA.US_daily",
-    "US_BABA.US_120min",
-    "US_BABA.US_90min",
-    "US_BABA.US_60min"
-  ],
-  "markets": [
-    { "market": "hk", "stock_code": "09988" },
-    { "market": "us", "stock_code": "BABA" }
-  ]
-}
-```
-
-**响应** `200` — 已存在
-```json
-{
-  "success": true,
-  "message": "工作流已存在",
-  "workflows": ["A_000001.SZ_daily", "A_000001.SZ_120min", "A_000001.SZ_90min", "A_000001.SZ_60min"],
+  "workflows": ["A_000001.SZ_5min"],
   "markets": [{ "market": "a", "stock_code": "000001" }]
 }
 ```
 
-**响应** `400` — 名称未录入
-```json
-{ "success": false, "message": "stock_codes 表中未找到 'xxx'，请先通过 POST /api/stock/code 录入该股票名称与代码映射" }
-```
+**响应** `200` — 已存在：`"message": "工作流已存在"`，其余同新创建。
 
-**响应** `400` — 缺少参数
-```json
-{ "success": false, "message": "缺少 stock 参数" }
-```
-
-> **注意**：工作流注册成功但数据表可能暂时为空——仅当调用发生在交易时段时才会拉取数据，非交易时段跳过数据获取。
+**响应** `400` — 名称未录入：提示先调用 `POST /api/stock/code` 录入映射。
 
 ---
 
@@ -177,147 +101,185 @@ Base URL: `/api`
 
 ### POST /stock/decision
 
-对已注册的股票运行量化算法并返回最新决策结果。支持代码或名称输入，名称可自动匹配多市场。
+返回最新可量化 BS 点。决策语义以 [algorithm.md §四](algorithm.md) 为权威源。
 
-**请求**
-```json
-{ "stock": "000001", "interval": "daily" }
-```
-```json
-{ "stock": "阿里巴巴", "interval": "daily" }
-```
+响应分四块：**决策**（`action` / `weight` / `confidence` / `execute_at`）→ **信号**（`signals`）→ **阈值**（`standards`）→ **人话视图**（`view`）。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `stock` | string | 是 | 股票代码或名称 |
-| `interval` | string | 否 | 分析周期，默认 `daily`（可选 `120min`/`90min`/`60min`） |
+| `interval` | string | 否 | **仅回显**至 `requested_interval`，不参与计算。算法固定为 `integrated`（日线趋势 + 60/90/120 结构 + 日线序列） |
 
-**响应** `200` — 单市场
+**响应** `200`
 ```json
 {
   "success": true,
   "input": "000001",
-  "interval": "daily",
+  "interval": "integrated",
+  "requested_interval": "daily",
   "count": 1,
-  "results": [
-    {
-      "market": "a",
-      "market_label": "A",
-      "stock_code": "000001",
-      "display_code": "000001.SZ",
-      "timestamp": "2026-04-25 00:00:00",
-      "close": 10.41,
-      "position": 6.0,
-      "position_label": "重仓",
-      "core_long": false,
-      "core_short": false,
-      "resonance_buy": false,
-      "resonance_sell": false,
-      "top_structure_75": false,
-      "top_structure_100": false,
-      "bottom_structure_75": false,
-      "bottom_structure_100": false,
-      "high9_signal": false,
-      "low9_signal": false,
-      "trend_standard": {
-        "short_upper": 10.85,
-        "short_lower": 10.12,
-        "long_upper": 10.62,
-        "long_lower": 9.88
+  "results": [{
+    "market": "a",
+    "stock_code": "000001",
+    "display_code": "000001.SZ",
+    "timestamp": "2026-04-25T00:00:00+08:00",
+    "close": 10.41,
+    "action": "SELL",
+    "weight": 0.4,
+    "confidence": "trend",
+    "execute_at": "2026-04-26 09:30:00",
+    "position": { "current": 6.0, "prev": 10.0, "label": "重仓" },
+    "signals": {
+      "structure": "none",
+      "structure_active": false,
+      "structure_until": null,
+      "structure_by_period": {
+        "60min":  { "structure": "none", "structure_active": false, "structure_until": null },
+        "90min":  { "structure": "none", "structure_active": false, "structure_until": null },
+        "120min": { "structure": "none", "structure_active": false, "structure_until": null }
       },
-      "structure_standard": {
-        "dif": 0.1523,
-        "dea": 0.1245,
-        "macd_dif_cross_dea_price": 10.35,
-        "macd_dif_turn_price": 10.28
-      },
-      "position_history": { "current": 6.0, "prev": 10.0 }
-    }
-  ]
-}
-```
-
-**响应** `200` — 多市场（如 "阿里巴巴" 港股 + 美股）
-```json
-{
-  "success": true,
-  "input": "阿里巴巴",
-  "interval": "daily",
-  "count": 2,
-  "results": [
-    {
-      "market": "hk", "market_label": "HK", "stock_code": "09988", "display_code": "09988.HK",
-      "close": 85.5, "timestamp": "2026-04-25",
-      "position": 6.0, "position_label": "重仓",
-      "core_long": false, "core_short": false, "resonance_buy": false, "resonance_sell": false,
-      "top_structure_75": false, "top_structure_100": false,
-      "bottom_structure_75": false, "bottom_structure_100": false,
-      "high9_signal": false, "low9_signal": false,
-      "trend_standard": { "short_upper": 86.50, "short_lower": 82.30, "long_upper": 84.20, "long_lower": 80.10 },
-      "structure_standard": { "dif": 1.23, "dea": 1.05, "macd_dif_cross_dea_price": 84.80, "macd_dif_turn_price": 85.10 }
+      "sequence": "none",
+      "sequence_active": false,
+      "sequence_until": null,
+      "resonance": null,
+      "probe": false
     },
-    {
-      "market": "us", "market_label": "US", "stock_code": "BABA", "display_code": "BABA.US",
-      "close": 105.2, "timestamp": "2026-04-25",
-      "position": 4.0, "position_label": "轻仓",
-      "core_long": false, "core_short": false, "resonance_buy": false, "resonance_sell": false,
-      "top_structure_75": false, "top_structure_100": false,
-      "bottom_structure_75": false, "bottom_structure_100": false,
-      "high9_signal": false, "low9_signal": false,
-      "trend_standard": { "short_upper": 108.50, "short_lower": 102.30, "long_upper": 106.20, "long_lower": 100.10 },
-      "structure_standard": { "dif": 2.15, "dea": 1.98, "macd_dif_cross_dea_price": 104.50, "macd_dif_turn_price": 105.80 }
+    "standards": {
+      "trend":     { "short_upper": 10.85, "short_lower": 10.12, "long_upper": 10.62, "long_lower": 9.88 },
+      "structure": { "dif": 0.15, "dea": 0.12, "cross_price": 10.35, "turn_price": 10.28 },
+      "structure_reference_period": "60min",
+      "structure_by_period": {
+        "60min":  { "dif": 0.15, "dea": 0.12, "cross_price": 10.35, "turn_price": 10.28 },
+        "90min":  { "dif": 0.14, "dea": 0.11, "cross_price": 10.30, "turn_price": 10.25 },
+        "120min": { "dif": 0.13, "dea": 0.10, "cross_price": 10.28, "turn_price": 10.22 }
+      }
+    },
+    "view": {
+      "trend": {
+        "label": "上升",
+        "position_label": "重仓",
+        "source": "daily",
+        "today_break_up": 10.85,
+        "today_break_down": 10.12,
+        "tomorrow_break_up": 10.90,
+        "tomorrow_break_down": 10.08
+      },
+      "next_triggers": {
+        "macd_75_at_close": 10.28,
+        "macd_100_at_close": 10.35,
+        "structure_reference_period": "60min",
+        "by_period": {
+          "60min":  { "macd_75_at_close": 10.28, "macd_100_at_close": 10.35 },
+          "90min":  { "macd_75_at_close": 10.25, "macd_100_at_close": 10.30 },
+          "120min": { "macd_75_at_close": 10.22, "macd_100_at_close": 10.28 }
+        },
+        "high9_progress": "0/9",
+        "low9_progress": "0/9",
+        "sequence_source": "daily"
+      },
+      "rationale": "收盘 10.41 在短轨 [10.12, 10.85] 区间内；趋势判定 上升（重仓）；本根触发 SELL（trend 置信度）。"
     }
-  ]
+  }]
 }
 ```
 
-**字段说明**
+多市场时（如 "阿里巴巴" 港股+美股），`count` 为市场数量，`results` 数组每项对应一个市场。部分市场无数据时，对应项含 `error` 字段说明原因。
+
+### 字段说明
+
+**决策块**（下单链路只需消费这 3 个字段）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `position` | float | 目标仓位：10（满仓）、6（重仓）、4（轻仓）、0（空仓） |
-| `position_label` | string | 仓位中文描述 |
-| `core_long` | bool | 核心做多信号：仓位 ≥ 4 且出现底部结构（75% 或 100%） |
-| `core_short` | bool | 核心做空信号：仓位 ≤ 6 且出现顶部结构（75% 或 100%） |
-| `resonance_buy` | bool | 共振买入：核心做多 + 低九序列 |
-| `resonance_sell` | bool | 共振卖出：核心做空 + 高九序列 |
-| `top_structure_75` | bool | 顶部结构 75% 形成（DIF 转向） |
-| `top_structure_100` | bool | 顶部结构 100% 完成（DIF 下穿 DEA） |
-| `bottom_structure_75` | bool | 底部结构 75% 形成 |
-| `bottom_structure_100` | bool | 底部结构 100% 完成 |
-| `high9_signal` | bool | 高九卖出序列形成 |
-| `low9_signal` | bool | 低九买入序列形成 |
-| `trend_standard` | object | **下一交易日趋势量化标准**：收盘价需要突破/跌破的通道阈值 |
-| `trend_standard.short_upper` | float | 短期通道上轨 → 收盘价高于此值即短期趋势向上突破 |
-| `trend_standard.short_lower` | float | 短期通道下轨 → 收盘价低于此值即短期趋势向下破位 |
-| `trend_standard.long_upper` | float | 长期通道上轨 → 收盘价高于此值即长期趋势向上突破 |
-| `trend_standard.long_lower` | float | 长期通道下轨 → 收盘价低于此值即长期趋势向下破位 |
-| `structure_standard` | object | **下一周期结构量化标准**：触发结构信号的收盘价阈值 |
-| `structure_standard.dif` | float | 当前 DIF 值 |
-| `structure_standard.dea` | float | 当前 DEA 值 |
-| `structure_standard.macd_dif_cross_dea_price` | float | 收盘价触发 DIF 与 DEA 交叉（金叉/死叉 → 结构100%形成）的阈值 |
-| `structure_standard.macd_dif_turn_price` | float | 收盘价触发 DIF 拐头（结构75%形成或钝化打破）的阈值 |
+| `action` | enum | `BUY` / `SELL` / `HOLD`，由仓位跃迁推导 |
+| `weight` | float | 调仓比例 = `|delta|/10` × 结构倍率 × 共振倍率 × 序列倍率 |
+| `confidence` | enum | `trend`（仅趋势）/ `core`（叠加结构）/ `resonance`（再叠序列共振） |
+| `execute_at` | string/null | 可执行时点，默认 `T+1 Open` |
+| `position.current` | float/null | 当根目标仓位：10 / 6 / 4 / 0（冷启动为 null） |
+| `position.prev` | float/null | 上一根目标仓位 |
+| `position.label` | string | 中文：满仓 / 重仓 / 轻仓 / 空仓 / 冷启动 |
 
-**响应** `400` — 数据不存在
+**信号块 `signals`**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `structure` | enum | 三周期合并主视图：`none` / `top_75` / `top_100` / `bottom_75` / `bottom_100` |
+| `structure_active` | bool | 任一 60/90/120min 结构有效即为 true |
+| `structure_until` | string/null | 各 active 周期 effective_until 的最大值 |
+| `structure_by_period` | object | 各周期 `{structure, structure_active, structure_until}` |
+| `sequence` | enum | 日线九转事件：`none` / `high9` / `low9` |
+| `sequence_active` | bool | 序列有效状态（H=5 根） |
+| `sequence_until` | string/null | 序列有效期截止时间戳 |
+| `resonance` | object/null | 60/90/120min 共振：`{level: 1.0|1.5|2.0, periods: [...]}`；无共振为 null |
+| `probe` | bool | 左侧试探预警（序列形成但结构未成），仅参考 |
+
+**阈值块 `standards`**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `trend.short_upper` / `short_lower` | float | 短期通道上/下轨 |
+| `trend.long_upper` / `long_lower` | float | 长期通道上/下轨 |
+| `structure.dif` / `dea` | float | 参考周期下一根 DIF/DEA |
+| `structure.cross_price` | float | 收盘触发 DIF/DEA 交叉的价位（结构 100%） |
+| `structure.turn_price` | float | 收盘触发 DIF 拐头的价位（结构 75%） |
+| `structure_reference_period` | string | 上述四价所属周期（60/90/120min） |
+| `structure_by_period` | object | 各周期完整阈值 |
+
+**人话视图 `view`**（从 standards / signals 派生）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `view.trend.label` | enum | `上升` / `下降` / `横盘` / `冷启动`（日线） |
+| `view.trend.position_label` | string | 仓位中文 |
+| `view.trend.today_break_up` / `today_break_down` | float | 下一根日线突破/破位价 |
+| `view.trend.tomorrow_break_up` / `tomorrow_break_down` | float/null | 再下一根日线外推价格 |
+| `view.next_triggers.macd_75_at_close` | float/null | 下一根参考周期 K 触发 75% 的收盘价 |
+| `view.next_triggers.macd_100_at_close` | float/null | 同上，100% 交叉价 |
+| `view.next_triggers.structure_reference_period` | string | 参考周期 |
+| `view.next_triggers.by_period` | object | 三周期分别触发价位 |
+| `view.next_triggers.high9_progress` / `low9_progress` | string | 日线九转进度 `"N/9"` |
+| `view.rationale` | string | 一句话态势总结 |
+
+> **执行语义**：所有信号基于当周期收盘价判定。`execute_at` 为下一根可执行 K 线开盘时间，不应在当周期内提前建仓。
+
+**响应** `400`
 ```json
-{ "success": false, "message": "stock_codes 表中未找到 'xxx'，请先通过 POST /api/stock/code 录入该股票名称与代码映射" }
+{ "success": false, "message": "interval 必须是 daily/120min/90min/60min" }
 ```
 ```json
 { "success": false, "message": "缺少 stock 参数" }
 ```
-```json
-{ "success": false, "message": "interval 必须是 daily/120min/90min/60min" }
-```
 
-> **注意**：当输入名称匹配多个市场时，可能部分市场有数据、部分市场暂无（如港股休市但美股交易中）。此时 `results` 数组中对无数据的市场会返回 `error` 字段说明原因，有数据的市场返回正常决策结果。
+---
+
+## 行情图表
+
+### GET /stock/chart
+
+返回 `image/png`。默认 `mode=integrated`：第一行日线 K 线 + 趋势四轨，以下依次 60/90/120min K 线 + MACD 副图。`mode=single` 仅渲染单一周期。
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `stock` | string | 是 | — | 股票代码或名称，含中文请 URL-encode |
+| `mode` | string | 否 | `integrated` | `integrated` / `single` |
+| `interval` | string | 否 | `daily` | 仅 `mode=single` 生效：`daily`/`120min`/`90min`/`60min` |
+| `bars` | int | 否 | 90/120 | 各子图最近 N 根，夹到 `[20, 500]` |
+
+**响应** `200` — `image/png`
+
+**示例**
+```bash
+# 默认整合图
+open "http://127.0.0.1:5555/api/stock/chart?stock=300274&bars=90"
+# 单一周期
+open "http://127.0.0.1:5555/api/stock/chart?stock=300274&mode=single&interval=90min"
+```
 
 ---
 
 ## 工作流查询
 
 ### GET /stock/\<code\>/workflows
-
-查询指定股票代码的所有工作流。
 
 | 参数 | 位置 | 说明 |
 |------|------|------|
@@ -328,48 +290,33 @@ Base URL: `/api`
 {
   "success": true,
   "stock_code": "000001",
-  "workflows": [
-    {
-      "id": "A_000001.SZ_daily",
-      "market": "a",
-      "stock_code": "000001",
-      "display_code": "000001.SZ",
-      "interval": "daily",
-      "table": "A_000001.SZ_daily",
-      "active": true,
-      "created_at": "2026-04-25T12:00:00"
-    }
-  ]
+  "workflows": [{
+    "id": "A_000001.SZ_5min",
+    "market": "a",
+    "stock_code": "000001",
+    "display_code": "000001.SZ",
+    "interval": "5min",
+    "table": "A_000001.SZ_5min",
+    "active": true,
+    "created_at": "2026-04-25T12:00:00"
+  }]
 }
 ```
 
 ### GET /workflows
 
-获取所有已注册的工作流。
+获取所有已注册工作流。
 
 **响应** `200`
 ```json
 {
   "success": true,
-  "count": 4,
-  "workflows": [
-    {
-      "id": "A_000001.SZ_daily",
-      "market": "a",
-      "stock_code": "000001",
-      "display_code": "000001.SZ",
-      "interval": "daily",
-      "table": "A_000001.SZ_daily",
-      "active": true,
-      "created_at": "2026-04-25T12:00:00"
-    }
-  ]
+  "count": 1,
+  "workflows": [{ "id": "A_000001.SZ_5min", "market": "a", ... }]
 }
 ```
 
 ### DELETE /workflows/\<workflow_id\>
-
-删除指定工作流及其调度任务。
 
 | 参数 | 位置 | 说明 |
 |------|------|------|
@@ -377,17 +324,12 @@ Base URL: `/api`
 
 **响应** `200`
 ```json
-{ "success": true, "message": "工作流 A_000001.SZ_daily 已删除" }
+{ "success": true, "message": "工作流 A_000001.SZ_5min 已删除" }
 ```
 
 **响应** `404`
 ```json
 { "success": false, "message": "工作流 xxx 不存在" }
-```
-
-**响应** `500`
-```json
-{ "success": false, "message": "服务器错误: ..." }
 ```
 
 ---
@@ -398,11 +340,11 @@ Base URL: `/api`
 
 | 市场 | 前缀 | 示例 |
 |------|------|------|
-| A 股 | `A` | `A_000001.SZ_daily`、`A_600519.SS_daily` |
-| 港股 | `HK` | `HK_00700.HK_daily` |
-| 美股 | `US` | `US_AAPL.US_daily` |
+| A 股 | `A` | `A_000001.SZ_5min`、`A_600519.SS_5min` |
+| 港股 | `HK` | `HK_00700.HK_5min` |
+| 美股 | `US` | `US_AAPL.US_5min` |
 
-周期：`daily`、`120min`、`90min`、`60min`
+采集层只保留 5min；决策时 `daily` / `120min` / `90min` / `60min` 由 `resample` 从 5min 表运行时合成。
 
 ## 支持输入格式
 
