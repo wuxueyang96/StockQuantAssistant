@@ -1,8 +1,9 @@
-from flask import Flask, render_template
 from app.config import Config
 
 
 def create_app():
+    from flask import Flask, render_template
+
     app = Flask(__name__)
     app.config.from_object(Config)
 

@@ -259,3 +259,7 @@ http://127.0.0.1:5000/
 | 图表渲染 | TradingView Lightweight Charts（行情图 + 回测图）+ Canvas fallback |
 | 行情数据 | AkShare 默认，iTick 可选，yfinance 兜底 |
 | 测试 | pytest |
+
+## 国金全量 QMT 只读策略适配
+
+新增 [QMT 接入指南](docs/qmt.md)：QMT 内置 Python 3.6 入口连接同机现代 Python 分析进程，复用本项目原始三层决策算法。仅输出信号，不访问账户、不下单。该版本为双进程适配，尚未在国金终端实测；不是 MiniQMT 脚本或单文件算法移植。
